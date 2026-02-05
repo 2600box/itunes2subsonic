@@ -480,7 +480,8 @@ func main() {
 
 	log.Printf("Src track count %d, Dst track count %d\n", len(srcSongs), len(dstSongs))
 
-	if *itunesRoot == "" && *subsonicRoot == "" {
+	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
+	if *itunesRoot == "" && *subsonicRoot == "" && !filterActive {
 		s := make([]i2s.SongInfo, 0, len(srcSongs))
 		for _, si := range srcSongs {
 			s = append(s, si)
@@ -490,12 +491,14 @@ func main() {
 			d = append(d, si)
 		}
 		*itunesRoot, *subsonicRoot = i2s.LibraryPrefix(s, d)
+	} else if *debugMode && filterActive && *itunesRoot == "" && *subsonicRoot == "" {
+		log.Printf("Skipping auto library root detection because filters are active; matching full paths instead.")
+
 	}
 	fmt.Printf("Music library root: src='%s' dst='%s'\n", *itunesRoot, *subsonicRoot)
 
 	byPath := make(map[string]*songPair)
 	byTrackID := make(map[int]*songPair)
-	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
 	for _, s := range srcSongs {
 		p := normalizeMatchPath(s.Path(), *itunesRoot)
 		t, ok := byPath[p]
