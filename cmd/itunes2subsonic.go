@@ -170,35 +170,72 @@ func normalizeLocation(loc string) (string, error) {
 		if pathValue == "" {
 			pathValue = parsed.Opaque
 		}
-		decoded, err := url.PathUnescape(pathValue)
-		if err != nil {
-			return "", err
-		}
+		decoded := safePathUnescape(pathValue)
 		return filepath.Clean(filepath.FromSlash(decoded)), nil
 	}
 
-	decoded, err := url.PathUnescape(loc)
-	if err != nil {
-		return "", err
-	}
+	decoded := safePathUnescape(loc)
 	return filepath.Clean(filepath.FromSlash(decoded)), nil
 }
 
 func normalizeMatchPath(pathValue string, root string) string {
-	decoded, err := url.PathUnescape(pathValue)
-	if err != nil {
-		decoded = pathValue
-	}
+	decoded := safePathUnescape(pathValue)
 	normalized := filepath.Clean(filepath.FromSlash(decoded))
-	rootDecoded, err := url.PathUnescape(root)
-	if err != nil {
-		rootDecoded = root
-	}
+	rootDecoded := safePathUnescape(root)
 	rootNormalized := filepath.Clean(filepath.FromSlash(rootDecoded))
 	if rootNormalized == "." {
 		rootNormalized = ""
 	}
 	return strings.TrimPrefix(strings.ToLower(normalized), strings.ToLower(rootNormalized))
+}
+
+func safePathUnescape(value string) string {
+	if value == "" {
+		return value
+	}
+	decoded, err := url.PathUnescape(value)
+	if err == nil {
+		return decoded
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch == '%' && i+2 < len(value) {
+			if hex, ok := decodeHexByte(value[i+1], value[i+2]); ok {
+				b.WriteByte(hex)
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
+
+func decodeHexByte(a, b byte) (byte, bool) {
+	hi, ok := hexValue(a)
+	if !ok {
+		return 0, false
+	}
+	lo, ok := hexValue(b)
+	if !ok {
+		return 0, false
+	}
+	return (hi << 4) | lo, true
+}
+
+func hexValue(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10, true
+	case b >= 'A' && b <= 'F':
+		return b - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func matchesFilter(value string, filter string) bool {
@@ -292,10 +329,10 @@ func main() {
 	}
 
 	c := &subsonic.Client{
-		Client:         &http.Client{},
-		BaseUrl:        *subsonicUrl,
-		User:           subsonicUser,
-		ClientName:     "apple-music2subsonic",
+		Client:     &http.Client{},
+		BaseUrl:    *subsonicUrl,
+		User:       subsonicUser,
+		ClientName: "apple-music2subsonic",
 	}
 	if err := c.Authenticate(subsonicPass); err != nil {
 		log.Fatalf("Failed to create Subsonic client: %s", err)
