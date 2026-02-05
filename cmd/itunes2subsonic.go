@@ -296,6 +296,7 @@ func main() {
 		BaseUrl:        *subsonicUrl,
 		User:           subsonicUser,
 		ClientName:     "apple-music2subsonic",
+		RequireDotView: true,
 	}
 	if err := c.Authenticate(subsonicPass); err != nil {
 		log.Fatalf("Failed to create Subsonic client: %s", err)
