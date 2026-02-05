@@ -336,7 +336,7 @@ func normalizeTrackDash(pathValue string) string {
 	return dir + base
 }
 
-var trackDashRegex = regexp.MustCompile(`^(\d+)\s*-\s+`)
+var trackDashRegex = regexp.MustCompile(`^(\d+)\s*[-–—]\s*`)
 
 func safePathUnescape(value string) string {
 	if value == "" {
