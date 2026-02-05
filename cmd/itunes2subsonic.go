@@ -428,6 +428,14 @@ func main() {
 			}
 			matchedCount++
 
+			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(loc, *filterPath) {
+				continue
+			}
+			if *limitTracks > 0 && matchedCount >= *limitTracks {
+				break
+			}
+			matchedCount++
+
 			srcSongs = append(srcSongs, itunesInfo{
 				id:        v.TrackId,
 				path:      loc,
