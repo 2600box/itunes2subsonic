@@ -39,7 +39,11 @@ $ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --itunes_xml="App
 * `--filter_path`: Only sync tracks whose path contains this text (comma-separated).
 * `--limit_tracks` (default: `0`): Only sync the first N matching tracks (0 means no limit).
 * `--debug` (default: `false`): Enable debug logging for filters/matching.
+* `--log_file` (default: empty): Write logs to the specified file (logs still go to stderr).
 * `--created_file` (unused): Placeholder for writing SQL to update created timestamps.
+
+When filters are used, automatic library root detection is skipped; provide `--itunes_root` and
+`--subsonic_root` if the library paths differ between Apple Music and Navidrome.
 
 ## Navidrome -> Navidrome
 
