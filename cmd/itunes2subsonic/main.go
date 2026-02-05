@@ -50,6 +50,11 @@ var (
 	dumpFile     = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
 )
 
+var (
+	stdoutWriter io.Writer = os.Stdout
+	stderrWriter io.Writer = os.Stderr
+)
+
 type subsonicInfo struct {
 	id        string
 	path      string
@@ -145,7 +150,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 func promptInput(reader *bufio.Reader, label string) (string, error) {
-	fmt.Printf("%s: ", label)
+	fmt.Fprintf(stdoutWriter, "%s: ", label)
 	value, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return "", err
@@ -154,10 +159,10 @@ func promptInput(reader *bufio.Reader, label string) (string, error) {
 }
 
 func promptPassword(label string) (string, error) {
-	fmt.Printf("%s: ", label)
+	fmt.Fprintf(stdoutWriter, "%s: ", label)
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println("")
+		fmt.Fprintln(stdoutWriter, "")
 		if err != nil {
 			return "", err
 		}
@@ -295,7 +300,22 @@ func normalizeMatchPath(pathValue string, root string) string {
 	}
 	normalized = strings.TrimLeft(normalized, string(os.PathSeparator))
 	rootNormalized = strings.TrimLeft(rootNormalized, string(os.PathSeparator))
-	return strings.TrimPrefix(strings.ToLower(normalized), strings.ToLower(rootNormalized))
+
+	normalizedLower := strings.ToLower(normalized)
+	rootLower := strings.ToLower(rootNormalized)
+	if rootLower != "" {
+		prefix := rootLower
+		if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+			prefix += string(os.PathSeparator)
+		}
+		if strings.HasPrefix(normalizedLower, prefix) {
+			normalizedLower = strings.TrimPrefix(normalizedLower, prefix)
+		} else if strings.HasPrefix(normalizedLower, rootLower) {
+			normalizedLower = strings.TrimPrefix(normalizedLower, rootLower)
+		}
+	}
+
+	return strings.TrimLeft(normalizedLower, string(os.PathSeparator))
 }
 
 func safePathUnescape(value string) string {
@@ -392,7 +412,10 @@ func main() {
 			log.Fatalf("Failed to open log file %q: %s", *logFile, err)
 		}
 		logFileHandle = handle
-		log.SetOutput(io.MultiWriter(os.Stderr, logFileHandle))
+		multi := io.MultiWriter(os.Stderr, logFileHandle)
+		log.SetOutput(multi)
+		stdoutWriter = io.MultiWriter(os.Stdout, logFileHandle)
+		stderrWriter = io.MultiWriter(os.Stderr, logFileHandle)
 	}
 	if logFileHandle != nil {
 		defer logFileHandle.Close()
@@ -521,7 +544,7 @@ func main() {
 		log.Printf("Skipping auto library root detection because filters are active; matching full paths instead.")
 
 	}
-	fmt.Printf("Music library root: src='%s' dst='%s'\n", *itunesRoot, *subsonicRoot)
+	fmt.Fprintf(stdoutWriter, "Music library root: src='%s' dst='%s'\n", *itunesRoot, *subsonicRoot)
 	if *dumpFile != "" {
 		if err := writeNavidromeDump(*dumpFile, dstSongs, *subsonicRoot); err != nil {
 			log.Fatalf("Failed to write Navidrome dump %q: %s", *dumpFile, err)
@@ -556,7 +579,7 @@ func main() {
 		t.dst = s
 	}
 
-	fmt.Println("== Missing Tracks ==")
+	fmt.Fprintln(stdoutWriter, "== Missing Tracks ==")
 	missingCount := 0
 	for k, v := range byPath {
 		if v.src.Id() != "" && v.dst.Id() != "" {
@@ -564,19 +587,19 @@ func main() {
 		}
 
 		missingCount++
-		fmt.Printf("%s\n\tmissing src(%s)\tdst(%s)\n", k, v.src.Id(), v.dst.Id())
+		fmt.Fprintf(stdoutWriter, "%s\n\tmissing src(%s)\tdst(%s)\n", k, v.src.Id(), v.dst.Id())
 	}
-	fmt.Println("")
-	fmt.Printf("== Missing Track Count %d / (%d + %d) ==\n", missingCount, len(srcSongs), len(dstSongs))
+	fmt.Fprintln(stdoutWriter, "")
+	fmt.Fprintf(stdoutWriter, "== Missing Track Count %d / (%d + %d) ==\n", missingCount, len(srcSongs), len(dstSongs))
 
 	if 100*missingCount/(len(srcSongs)+len(dstSongs)) > 90 {
-		fmt.Printf(`Warning: Missing count is significant. Tips:
+		fmt.Fprintf(stdoutWriter, `Warning: Missing count is significant. Tips:
 * Verify that the libraries are configured for the same directory
 * Set --itunes_root and --subsonic_root to the correct values
 * In Navidrome Player Settings, configure "Report Real Path"\n`)
 	}
 
-	fmt.Println("== Mismatched Ratings ==")
+	fmt.Fprintln(stdoutWriter, "== Mismatched Ratings ==")
 	var mismatchCount int64 = 0
 	for k, v := range byPath {
 		if v.src.Id() == "" || v.dst.Id() == "" || v.src.FiveStarRating() == v.dst.FiveStarRating() {
@@ -586,16 +609,16 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("%s\n\trating src(%d)\tdst(%d)\n", k, v.src.FiveStarRating(), v.dst.FiveStarRating())
+		fmt.Fprintf(stdoutWriter, "%s\n\trating src(%d)\tdst(%d)\n", k, v.src.FiveStarRating(), v.dst.FiveStarRating())
 		mismatchCount++
 	}
-	fmt.Println("")
+	fmt.Fprintln(stdoutWriter, "")
 
-	fmt.Printf("== Copy %d Ratings To Navidrome ==\n", mismatchCount)
+	fmt.Fprintf(stdoutWriter, "== Copy %d Ratings To Navidrome ==\n", mismatchCount)
 	if *dryRun {
-		fmt.Printf("Set --dry_run=false to modify %s", *subsonicUrl)
+		fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s", *subsonicUrl)
 	} else {
-		fmt.Printf("== Copy %d Ratings To Navidrome ==\n", mismatchCount)
+		fmt.Fprintf(stdoutWriter, "== Copy %d Ratings To Navidrome ==\n", mismatchCount)
 		// Pause to give the user a chance to quit.
 		time.Sleep(400 * time.Millisecond)
 
@@ -612,7 +635,7 @@ func main() {
 			err := c.SetRating(v.dst.Id(), v.src.FiveStarRating())
 			bar.Add(1)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting rating for '%s': %s\n", k, err)
+				fmt.Fprintf(stderrWriter, "Error setting rating for '%s': %s\n", k, err)
 				skip++
 				if *skipCount > 0 && skip > *skipCount {
 					log.Fatalf("Too many skipped tracks. Failing out...")
@@ -623,7 +646,7 @@ func main() {
 	}
 
 	if *updatePlay {
-		fmt.Println("== Play Count / Last Played ==")
+		fmt.Fprintln(stdoutWriter, "== Play Count / Last Played ==")
 		var playUpdates int64
 		for _, v := range byPath {
 			if v.src.Id() == "" || v.dst.Id() == "" {
@@ -637,9 +660,9 @@ func main() {
 			}
 			playUpdates++
 		}
-		fmt.Printf("== Sync %d Play Counts To Navidrome ==\n", playUpdates)
+		fmt.Fprintf(stdoutWriter, "== Sync %d Play Counts To Navidrome ==\n", playUpdates)
 		if *dryRun {
-			fmt.Printf("Set --dry_run=false to modify %s\n", *subsonicUrl)
+			fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s\n", *subsonicUrl)
 		} else {
 			skip := 0
 			bar := i2s.PbWithOptions(pb.Default(playUpdates, "scrobble plays"))
@@ -675,7 +698,7 @@ func main() {
 						"submission": "true",
 					})
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error setting play time for '%s': %s\n", k, err)
+						fmt.Fprintf(stderrWriter, "Error setting play time for '%s': %s\n", k, err)
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
@@ -690,7 +713,7 @@ func main() {
 	}
 
 	if *syncStarred {
-		fmt.Println("== Loved/Starred ==")
+		fmt.Fprintln(stdoutWriter, "== Loved/Starred ==")
 		var toStar []string
 		var toUnstar []string
 		for _, v := range byPath {
@@ -704,9 +727,9 @@ func main() {
 				toUnstar = append(toUnstar, v.dst.Id())
 			}
 		}
-		fmt.Printf("== Sync %d Star / %d Unstar ==\n", len(toStar), len(toUnstar))
+		fmt.Fprintf(stdoutWriter, "== Sync %d Star / %d Unstar ==\n", len(toStar), len(toUnstar))
 		if *dryRun {
-			fmt.Printf("Set --dry_run=false to modify %s\n", *subsonicUrl)
+			fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s\n", *subsonicUrl)
 		} else {
 			skip := 0
 			if len(toStar) > 0 {
@@ -715,7 +738,7 @@ func main() {
 					err := c.Star(subsonic.StarParameters{SongIDs: chunk})
 					bar.Add(len(chunk))
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error starring tracks: %s\n", err)
+						fmt.Fprintf(stderrWriter, "Error starring tracks: %s\n", err)
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
@@ -730,7 +753,7 @@ func main() {
 					err := c.Unstar(subsonic.StarParameters{SongIDs: chunk})
 					bar.Add(len(chunk))
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error unstarring tracks: %s\n", err)
+						fmt.Fprintf(stderrWriter, "Error unstarring tracks: %s\n", err)
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
@@ -743,9 +766,9 @@ func main() {
 	}
 
 	if *syncPlaylist {
-		fmt.Println("== Playlists ==")
+		fmt.Fprintln(stdoutWriter, "== Playlists ==")
 		if len(playlistRefs) == 0 {
-			fmt.Println("No playlists found in library.")
+			fmt.Fprintln(stdoutWriter, "No playlists found in library.")
 			return
 		}
 		existingPlaylists, err := c.GetPlaylists(nil)
@@ -764,9 +787,9 @@ func main() {
 			}
 			playlistCount++
 		}
-		fmt.Printf("== Sync %d Playlists ==\n", playlistCount)
+		fmt.Fprintf(stdoutWriter, "== Sync %d Playlists ==\n", playlistCount)
 		if *dryRun {
-			fmt.Printf("Set --dry_run=false to modify %s\n", *subsonicUrl)
+			fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s\n", *subsonicUrl)
 		} else {
 			skip := 0
 			bar := i2s.PbWithOptions(pb.Default(playlistCount, "sync playlists"))
@@ -799,7 +822,7 @@ func main() {
 					}
 					if len(removeParams) > 0 {
 						if err := subsonicRequest(c, "updatePlaylist", removeParams); err != nil {
-							fmt.Fprintf(os.Stderr, "Error clearing playlist '%s': %s\n", playlist.Name, err)
+							fmt.Fprintf(stderrWriter, "Error clearing playlist '%s': %s\n", playlist.Name, err)
 							skip++
 							if *skipCount > 0 && skip > *skipCount {
 								log.Fatalf("Too many skipped tracks. Failing out...")
@@ -814,7 +837,7 @@ func main() {
 						addParams.Add("songIdToAdd", id)
 					}
 					if err := subsonicRequest(c, "updatePlaylist", addParams); err != nil {
-						fmt.Fprintf(os.Stderr, "Error updating playlist '%s': %s\n", playlist.Name, err)
+						fmt.Fprintf(stderrWriter, "Error updating playlist '%s': %s\n", playlist.Name, err)
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
@@ -827,7 +850,7 @@ func main() {
 						createParams.Add("songId", id)
 					}
 					if err := subsonicRequest(c, "createPlaylist", createParams); err != nil {
-						fmt.Fprintf(os.Stderr, "Error creating playlist '%s': %s\n", playlist.Name, err)
+						fmt.Fprintf(stderrWriter, "Error creating playlist '%s': %s\n", playlist.Name, err)
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
