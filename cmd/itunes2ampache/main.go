@@ -1,7 +1,7 @@
 package main
 
 // Notes:
-// -   Normalizes paths to lower case because iTunes/Windows doesn't update if the underlying file changes.
+// -   Normalizes paths to lower case because Apple Music/Windows doesn't update if the underlying file changes.
 
 import (
 	"flag"
@@ -15,13 +15,13 @@ import (
 	"time"
 
 	"github.com/logank/ampache"
-	"github.com/logank/itunes2ampache/internal/itunes"
+	"github.com/logank/itunes2subsonic/internal/itunes"
 	pb "github.com/schollz/progressbar/v3"
 )
 
 var (
 	dryRun      = true // --dry_run
-	itunesXml   = flag.String("itunes_xml", "", "path to the itunes XML to import")
+	itunesXml   = flag.String("itunes_xml", "", "path to the Apple Music Library XML to import")
 	skipCount   = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
 	ampacheUrl  = flag.String("ampache", "", "url of the Ampache instance")
 	playFile    = flag.String("play_file", "", "a file to write Ampache SQL statements to update Last Played")
@@ -106,7 +106,7 @@ func main() {
 		for _, v := range library.Tracks {
 			loc, _ := url.PathUnescape(v.Location)
 			if !strings.HasPrefix(loc, itunesRoot) {
-				log.Printf("Warning: Unusual iTunes location: %s `%s`", v.Name, v.Location)
+				log.Printf("Warning: Unusual Apple Music location: %s `%s`", v.Name, v.Location)
 				skip++
 				if *skipCount > 0 && skip > *skipCount {
 					log.Fatalf("Too many skipped tracks. Failing out...")
@@ -126,7 +126,7 @@ func main() {
 			t.itunesPlayDate = v.PlayDateUTC
 		}
 
-		log.Printf("iTunes: track count: %d\n", trackCount)
+		log.Printf("Apple Music: track count: %d\n", trackCount)
 	}
 
 	var c *ampache.Client

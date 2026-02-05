@@ -32,14 +32,14 @@ var (
 	itunesXml    = flag.String("itunes_xml", "Apple Music Library.xml", "path to the Apple Music Library XML to import")
 	skipCount    = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
 	copyUnrated  = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
-	subsonicUrl  = flag.String("subsonic", "", "url of the Subsonic instance")
+	subsonicUrl  = flag.String("subsonic", "", "url of the Navidrome instance")
 	updatePlay   = flag.Bool("update_played", true, "update play count and last played time")
-	syncStarred  = flag.Bool("sync_starred", true, "sync Apple Music loved tracks to Subsonic starred")
-	syncPlaylist = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Subsonic")
+	syncStarred  = flag.Bool("sync_starred", true, "sync Apple Music loved tracks to Navidrome starred")
+	syncPlaylist = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
 	maxScrobbles = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
 	createdFile  = flag.String("created_file", "", "a file to write SQL statements to update the created time")
 	itunesRoot   = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
-	subsonicRoot = flag.String("subsonic_root", "", "(optional) library prefix for Subsonic content")
+	subsonicRoot = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
 	filterAlbum  = flag.String("filter_album", "", "only sync tracks whose album contains this text")
 	filterArtist = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
 	filterName   = flag.String("filter_name", "", "only sync tracks whose title contains this text")
@@ -177,7 +177,7 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 			"albumCount":  "0",
 		})
 		if err != nil {
-			log.Fatalf("Failed fetching Subsonic songs: %s", err)
+			log.Fatalf("Failed fetching Navidrome songs: %s", err)
 		}
 
 		for _, s := range songs.Song {
@@ -365,29 +365,29 @@ func main() {
 
 	reader := bufio.NewReader(os.Stdin)
 	if *subsonicUrl == "" {
-		value, err := promptInput(reader, "Subsonic URL")
+		value, err := promptInput(reader, "Navidrome URL")
 		if err != nil {
-			log.Fatalf("Failed to read Subsonic URL: %s", err)
+			log.Fatalf("Failed to read Navidrome URL: %s", err)
 		}
 		*subsonicUrl = value
 	}
 	if subsonicUser == "" {
-		value, err := promptInput(reader, "Subsonic Username")
+		value, err := promptInput(reader, "Navidrome Username")
 		if err != nil {
-			log.Fatalf("Failed to read Subsonic username: %s", err)
+			log.Fatalf("Failed to read Navidrome username: %s", err)
 		}
 		subsonicUser = value
 	}
 	if subsonicPass == "" {
-		value, err := promptPassword("Subsonic Password")
+		value, err := promptPassword("Navidrome Password")
 		if err != nil {
-			log.Fatalf("Failed to read Subsonic password: %s", err)
+			log.Fatalf("Failed to read Navidrome password: %s", err)
 		}
 		subsonicPass = value
 	}
 
 	if *subsonicUrl == "" || subsonicUser == "" || subsonicPass == "" {
-		log.Fatal("Subsonic URL, username, and password are required.")
+		log.Fatal("Navidrome URL, username, and password are required.")
 	}
 
 	cfg.SubsonicURL = *subsonicUrl
@@ -428,14 +428,6 @@ func main() {
 			}
 			matchedCount++
 
-			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(loc, *filterPath) {
-				continue
-			}
-			if *limitTracks > 0 && matchedCount >= *limitTracks {
-				break
-			}
-			matchedCount++
-
 			srcSongs = append(srcSongs, itunesInfo{
 				id:        v.TrackId,
 				path:      loc,
@@ -455,20 +447,20 @@ func main() {
 		Client:     &http.Client{},
 		BaseUrl:    *subsonicUrl,
 		User:       subsonicUser,
-		ClientName: "apple-music2subsonic",
+		ClientName: "apple-music2navidrome",
 	}
 	if err := c.Authenticate(subsonicPass); err != nil {
-		log.Fatalf("Failed to create Subsonic client: %s", err)
+		log.Fatalf("Failed to create Navidrome client: %s", err)
 	}
 
 	if *debugMode {
 		log.Printf("Filters: album=%q artist=%q name=%q path=%q limit=%d", *filterAlbum, *filterArtist, *filterName, *filterPath, *limitTracks)
 	}
 
-	fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching subsonic data"))
+	fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching navidrome data"))
 	dstSongs, err := fetchSubsonicSongs(c, fetchBar)
 	if err != nil {
-		log.Fatalf("Failed fetching subsonic songs: %s", err)
+		log.Fatalf("Failed fetching navidrome songs: %s", err)
 	}
 
 	log.Printf("Src track count %d, Dst track count %d\n", len(srcSongs), len(dstSongs))
@@ -549,11 +541,11 @@ func main() {
 	}
 	fmt.Println("")
 
-	fmt.Printf("== Copy %d Ratings To Subsonic ==\n", mismatchCount)
+	fmt.Printf("== Copy %d Ratings To Navidrome ==\n", mismatchCount)
 	if *dryRun {
 		fmt.Printf("Set --dry_run=false to modify %s", *subsonicUrl)
 	} else {
-		fmt.Printf("== Copy %d Ratings To Subsonic ==\n", mismatchCount)
+		fmt.Printf("== Copy %d Ratings To Navidrome ==\n", mismatchCount)
 		// Pause to give the user a chance to quit.
 		time.Sleep(400 * time.Millisecond)
 
@@ -595,7 +587,7 @@ func main() {
 			}
 			playUpdates++
 		}
-		fmt.Printf("== Sync %d Play Counts To Subsonic ==\n", playUpdates)
+		fmt.Printf("== Sync %d Play Counts To Navidrome ==\n", playUpdates)
 		if *dryRun {
 			fmt.Printf("Set --dry_run=false to modify %s\n", *subsonicUrl)
 		} else {

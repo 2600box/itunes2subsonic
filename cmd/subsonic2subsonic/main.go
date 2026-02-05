@@ -1,7 +1,7 @@
 package main
 
 // Notes:
-// -   Normalizes paths to lower case because iTunes/Windows doesn't update if the underlying file changes.
+// -   Normalizes paths to lower case because Apple Music/Windows doesn't update if the underlying file changes.
 // -   Navidrome requires going into the Player settings and configuring "Report Real Path"
 
 import (
@@ -25,8 +25,8 @@ var (
 	dryRun          = flag.Bool("dry_run", true, "don't modify the library")
 	skipCount       = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
 	copyUnrated     = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
-	subsonicSrcUrl  = flag.String("subsonic_src", "", "url of the Subsonic instance to read")
-	subsonicDstUrl  = flag.String("subsonic_dst", "", "url of the Subsonic instance to write to")
+	subsonicSrcUrl  = flag.String("subsonic_src", "", "url of the Navidrome instance to read")
+	subsonicDstUrl  = flag.String("subsonic_dst", "", "url of the Navidrome instance to write to")
 	subsonicSrcRoot = flag.String("subsonic_src_root", "", "(optional) the music library prefix on the read instance")
 	subsonicDstRoot = flag.String("subsonic_dst_root", "", "(optional) the music library prefix on the write instance")
 )
@@ -58,7 +58,7 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 			"albumCount":  "0",
 		})
 		if err != nil {
-			log.Fatalf("Failed fetching Subsonic songs: %s", err)
+			log.Fatalf("Failed fetching Navidrome songs: %s", err)
 		}
 
 		for _, s := range songs.Song {
@@ -99,31 +99,29 @@ func main() {
 	}
 
 	srcC := &subsonic.Client{
-		Client:         &http.Client{},
-		BaseUrl:        *subsonicSrcUrl,
-		User:           subsonicSrcUser,
-		PasswordAuth:   true,
-		ClientName:     "subsonic2subsonic",
-		RequireDotView: true,
+		Client:       &http.Client{},
+		BaseUrl:      *subsonicSrcUrl,
+		User:         subsonicSrcUser,
+		PasswordAuth: true,
+		ClientName:   "navidrome2navidrome",
 	}
 	if err := srcC.Authenticate(subsonicSrcPass); err != nil {
-		log.Fatalf("Failed to create Subsonic client: %s", err)
+		log.Fatalf("Failed to create Navidrome client: %s", err)
 	}
 
 	dstC := &subsonic.Client{
-		Client:         &http.Client{},
-		BaseUrl:        *subsonicDstUrl,
-		User:           subsonicDstUser,
-		ClientName:     "subsonic2subsonic",
-		RequireDotView: true,
+		Client:     &http.Client{},
+		BaseUrl:    *subsonicDstUrl,
+		User:       subsonicDstUser,
+		ClientName: "navidrome2navidrome",
 	}
 	if err := dstC.Authenticate(subsonicDstPass); err != nil {
-		log.Fatalf("Failed to create Subsonic client: %s", err)
+		log.Fatalf("Failed to create Navidrome client: %s", err)
 	}
 
 	var srcSongs, dstSongs []subsonicInfo
 	g, _ := errgroup.WithContext(ctx)
-	fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching subsonic data"))
+	fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching navidrome data"))
 	g.Go(func() error {
 		var err error
 		srcSongs, err = fetchSubsonicSongs(srcC, fetchBar)
@@ -135,11 +133,11 @@ func main() {
 		return err
 	})
 	if err := g.Wait(); err != nil {
-		log.Fatalf("Failed while fetching Subsonic info: %s", err)
+		log.Fatalf("Failed while fetching Navidrome info: %s", err)
 	}
 	fetchBar.Finish()
 
-	log.Printf("Subsonic Src track count %d, Dst track count %d\n", len(srcSongs), len(dstSongs))
+	log.Printf("Navidrome src track count %d, dst track count %d\n", len(srcSongs), len(dstSongs))
 
 	if *subsonicSrcRoot == "" && *subsonicDstRoot == "" {
 		s := make([]i2s.SongInfo, 0, len(srcSongs))
@@ -209,7 +207,7 @@ func main() {
 	}
 	fmt.Println("")
 
-	fmt.Printf("== Copy %d Ratings To Subsonic ==\n", mismatchCount)
+	fmt.Printf("== Copy %d Ratings To Navidrome ==\n", mismatchCount)
 	if *dryRun {
 		fmt.Printf("Set --dry_run=false to modify %s", *subsonicDstUrl)
 	} else {
