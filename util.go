@@ -9,6 +9,11 @@ import (
 	pb "github.com/schollz/progressbar/v3"
 )
 
+// SongInfo provides the minimal path information needed for library matching.
+type SongInfo interface {
+	Path() string
+}
+
 // PbWithOptions applies options to a progressbar. I like the default, but the
 // saucer is something that doesn't render well in my terminal.
 func PbWithOptions(p *pb.ProgressBar) *pb.ProgressBar {
