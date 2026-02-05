@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -315,8 +316,27 @@ func normalizeMatchPath(pathValue string, root string) string {
 		}
 	}
 
+	normalizedLower = normalizeTrackDash(normalizedLower)
+
 	return strings.TrimLeft(normalizedLower, string(os.PathSeparator))
 }
+
+func normalizeTrackDash(pathValue string) string {
+	if pathValue == "" {
+		return pathValue
+	}
+	dir, base := filepath.Split(pathValue)
+	if base == "" {
+		return pathValue
+	}
+	ext := filepath.Ext(base)
+	name := strings.TrimSuffix(base, ext)
+	name = trackDashRegex.ReplaceAllString(name, "$1 ")
+	base = name + ext
+	return dir + base
+}
+
+var trackDashRegex = regexp.MustCompile(`^(\d+)\s*-\s+`)
 
 func safePathUnescape(value string) string {
 	if value == "" {
