@@ -47,6 +47,7 @@ var (
 	limitTracks  = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
 	debugMode    = flag.Bool("debug", false, "enable debug logging for filtering and matching")
 	logFile      = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
+	dumpFile     = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
 )
 
 type subsonicInfo struct {
@@ -200,6 +201,31 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 	}
 
 	return tracks, nil
+}
+
+func writeNavidromeDump(path string, songs []subsonicInfo, root string) error {
+	type dumpEntry struct {
+		ID        string `json:"id"`
+		Path      string `json:"path"`
+		CleanPath string `json:"clean_path"`
+		MatchPath string `json:"match_path"`
+	}
+	entries := make([]dumpEntry, 0, len(songs))
+	for _, song := range songs {
+		decoded := safePathUnescape(song.Path())
+		cleaned := filepath.Clean(filepath.FromSlash(decoded))
+		entries = append(entries, dumpEntry{
+			ID:        song.Id(),
+			Path:      song.Path(),
+			CleanPath: cleaned,
+			MatchPath: normalizeMatchPath(song.Path(), root),
+		})
+	}
+	payload, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o600)
 }
 
 func subsonicRequest(c *subsonic.Client, endpoint string, params url.Values) error {
@@ -496,6 +522,12 @@ func main() {
 
 	}
 	fmt.Printf("Music library root: src='%s' dst='%s'\n", *itunesRoot, *subsonicRoot)
+	if *dumpFile != "" {
+		if err := writeNavidromeDump(*dumpFile, dstSongs, *subsonicRoot); err != nil {
+			log.Fatalf("Failed to write Navidrome dump %q: %s", *dumpFile, err)
+		}
+		log.Printf("Wrote Navidrome dump to %s", *dumpFile)
+	}
 
 	byPath := make(map[string]*songPair)
 	byTrackID := make(map[int]*songPair)
