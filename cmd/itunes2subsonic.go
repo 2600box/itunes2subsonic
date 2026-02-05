@@ -5,6 +5,8 @@ package main
 // -   Navidrome requires going into the Player settings and configuring "Report Real Path"
 
 import (
+	"bufio"
+	"encoding/json"
 	"encoding/xml"
 	"flag"
 	"fmt"
@@ -22,6 +24,7 @@ import (
 	i2s "github.com/logank/itunes2subsonic"
 	"github.com/logank/itunes2subsonic/internal/itunes"
 	pb "github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 )
 
 var (
@@ -83,6 +86,83 @@ type playlistRef struct {
 	Name   string
 	Master bool
 	Items  []itunes.PlaylistItem
+}
+
+type appConfig struct {
+	SubsonicURL  string `json:"subsonic_url"`
+	SubsonicUser string `json:"subsonic_user"`
+	SubsonicPass string `json:"subsonic_pass"`
+}
+
+func configPath() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "itunes2subsonic", "config.json"), nil
+}
+
+func loadConfig() appConfig {
+	path, err := configPath()
+	if err != nil {
+		return appConfig{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return appConfig{}
+	}
+	var cfg appConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return appConfig{}
+	}
+	return cfg
+}
+
+func saveConfig(cfg appConfig) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	payload, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o600)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func promptInput(reader *bufio.Reader, label string) (string, error) {
+	fmt.Printf("%s: ", label)
+	value, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func promptPassword(label string) (string, error) {
+	fmt.Printf("%s: ", label)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println("")
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(pass)), nil
+	}
+	reader := bufio.NewReader(os.Stdin)
+	return promptInput(reader, label)
 }
 
 func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo, error) {
@@ -276,10 +356,45 @@ func matchesFilter(value string, filter string) bool {
 
 func main() {
 	flag.Parse()
-	subsonicUser, subsonicPass := os.Getenv("SUBSONIC_USER"), os.Getenv("SUBSONIC_PASS")
+	cfg := loadConfig()
+	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), cfg.SubsonicUser)
+	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), cfg.SubsonicPass)
+	if *subsonicUrl == "" {
+		*subsonicUrl = cfg.SubsonicURL
+	}
 
-	if (subsonicUser != "" || *subsonicUrl != "") && subsonicPass == "" {
-		log.Fatal("If connecting to Subsonic, you must set the SUBSONIC_USER and SUBSONIC_PASS environment variables.")
+	reader := bufio.NewReader(os.Stdin)
+	if *subsonicUrl == "" {
+		value, err := promptInput(reader, "Subsonic URL")
+		if err != nil {
+			log.Fatalf("Failed to read Subsonic URL: %s", err)
+		}
+		*subsonicUrl = value
+	}
+	if subsonicUser == "" {
+		value, err := promptInput(reader, "Subsonic Username")
+		if err != nil {
+			log.Fatalf("Failed to read Subsonic username: %s", err)
+		}
+		subsonicUser = value
+	}
+	if subsonicPass == "" {
+		value, err := promptPassword("Subsonic Password")
+		if err != nil {
+			log.Fatalf("Failed to read Subsonic password: %s", err)
+		}
+		subsonicPass = value
+	}
+
+	if *subsonicUrl == "" || subsonicUser == "" || subsonicPass == "" {
+		log.Fatal("Subsonic URL, username, and password are required.")
+	}
+
+	cfg.SubsonicURL = *subsonicUrl
+	cfg.SubsonicUser = subsonicUser
+	cfg.SubsonicPass = subsonicPass
+	if err := saveConfig(cfg); err != nil {
+		log.Printf("Warning: failed to save config: %s", err)
 	}
 
 	var srcSongs []itunesInfo
@@ -304,6 +419,14 @@ func main() {
 			if err != nil {
 				log.Fatalf("Unexpected Apple Music location '%s': %s", v.Location, err)
 			}
+
+			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(loc, *filterPath) {
+				continue
+			}
+			if *limitTracks > 0 && matchedCount >= *limitTracks {
+				break
+			}
+			matchedCount++
 
 			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(loc, *filterPath) {
 				continue
