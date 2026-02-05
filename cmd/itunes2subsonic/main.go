@@ -46,6 +46,7 @@ var (
 	filterPath   = flag.String("filter_path", "", "only sync tracks whose path contains this text")
 	limitTracks  = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
 	debugMode    = flag.Bool("debug", false, "enable debug logging for filtering and matching")
+	logFile      = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
 )
 
 type subsonicInfo struct {
@@ -263,9 +264,11 @@ func normalizeMatchPath(pathValue string, root string) string {
 	normalized := filepath.Clean(filepath.FromSlash(decoded))
 	rootDecoded := safePathUnescape(root)
 	rootNormalized := filepath.Clean(filepath.FromSlash(rootDecoded))
-	if rootNormalized == "." {
+	if rootNormalized == "." || rootNormalized == string(os.PathSeparator) {
 		rootNormalized = ""
 	}
+	normalized = strings.TrimLeft(normalized, string(os.PathSeparator))
+	rootNormalized = strings.TrimLeft(rootNormalized, string(os.PathSeparator))
 	return strings.TrimPrefix(strings.ToLower(normalized), strings.ToLower(rootNormalized))
 }
 
@@ -356,6 +359,18 @@ func matchesFilter(value string, filter string) bool {
 
 func main() {
 	flag.Parse()
+	var logFileHandle *os.File
+	if *logFile != "" {
+		handle, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			log.Fatalf("Failed to open log file %q: %s", *logFile, err)
+		}
+		logFileHandle = handle
+		log.SetOutput(io.MultiWriter(os.Stderr, logFileHandle))
+	}
+	if logFileHandle != nil {
+		defer logFileHandle.Close()
+	}
 	cfg := loadConfig()
 	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), cfg.SubsonicUser)
 	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), cfg.SubsonicPass)
