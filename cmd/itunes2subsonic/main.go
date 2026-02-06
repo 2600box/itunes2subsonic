@@ -29,26 +29,31 @@ import (
 )
 
 var (
-	dryRun       = flag.Bool("dry_run", true, "don't modify the library")
-	itunesXml    = flag.String("itunes_xml", "Apple Music Library.xml", "path to the Apple Music Library XML to import")
-	skipCount    = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
-	copyUnrated  = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
-	subsonicUrl  = flag.String("subsonic", "", "url of the Navidrome instance")
-	updatePlay   = flag.Bool("update_played", true, "update play count and last played time")
-	syncStarred  = flag.Bool("sync_starred", true, "sync Apple Music loved tracks to Navidrome starred")
-	syncPlaylist = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
-	maxScrobbles = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
-	createdFile  = flag.String("created_file", "", "a file to write SQL statements to update the created time")
-	itunesRoot   = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
-	subsonicRoot = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
-	filterAlbum  = flag.String("filter_album", "", "only sync tracks whose album contains this text")
-	filterArtist = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
-	filterName   = flag.String("filter_name", "", "only sync tracks whose title contains this text")
-	filterPath   = flag.String("filter_path", "", "only sync tracks whose path contains this text")
-	limitTracks  = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
-	debugMode    = flag.Bool("debug", false, "enable debug logging for filtering and matching")
-	logFile      = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
-	dumpFile     = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
+	dryRun          = flag.Bool("dry_run", true, "don't modify the library")
+	itunesXml       = flag.String("itunes_xml", "Apple Music Library.xml", "path to the Apple Music Library XML to import")
+	skipCount       = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
+	copyUnrated     = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
+	subsonicUrl     = flag.String("subsonic", "", "url of the Navidrome instance")
+	updatePlay      = flag.Bool("update_played", true, "update play count and last played time")
+	syncStarred     = flag.Bool("sync_starred", true, "sync Apple Music loved tracks to Navidrome starred")
+	syncPlaylist    = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
+	maxScrobbles    = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
+	createdFile     = flag.String("created_file", "", "a file to write SQL statements to update the created time")
+	itunesRoot      = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
+	subsonicRoot    = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
+	musicRoot       = flag.String("music_root", "", "(optional) root of the on-disk music folder for real-path checks")
+	filterAlbum     = flag.String("filter_album", "", "only sync tracks whose album contains this text")
+	filterArtist    = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
+	filterName      = flag.String("filter_name", "", "only sync tracks whose title contains this text")
+	filterPath      = flag.String("filter_path", "", "only sync tracks whose path contains this text")
+	limitTracks     = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
+	debugMode       = flag.Bool("debug", false, "enable debug logging for filtering and matching")
+	logFile         = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
+	dumpFile        = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
+	subsonicClient  = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
+	requireRealPath = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
+	matchMode       = flag.String("match_mode", "realpath", "path matching mode: realpath or lenient")
+	probeSongID     = flag.String("probe_song_id", "", "if set, fetch /rest/getSong for the given ID and validate its path")
 )
 
 var (
@@ -209,7 +214,7 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 	return tracks, nil
 }
 
-func writeNavidromeDump(path string, songs []subsonicInfo, root string) error {
+func writeNavidromeDump(path string, songs []subsonicInfo, root string, mode matchModeValue) error {
 	type dumpEntry struct {
 		ID          string `json:"id"`
 		Path        string `json:"path"`
@@ -222,7 +227,7 @@ func writeNavidromeDump(path string, songs []subsonicInfo, root string) error {
 	for _, song := range songs {
 		decoded := safePathUnescape(song.Path())
 		cleaned := filepath.Clean(filepath.FromSlash(decoded))
-		matchPath := normalizeMatchPath(song.Path(), root)
+		matchPath := normalizeMatchPathWithMode(song.Path(), root, mode)
 		if *debugMode && song.Id() == "10c87dea0ab488cb39f7f607ea8c0f0d" {
 			log.Printf("Navidrome dump debug for %s: raw=%q decoded=%q clean=%q normalised=%q", song.Id(), song.Path(), decoded, cleaned, matchPath)
 		}
@@ -300,6 +305,17 @@ func normalizeLocation(loc string) (string, error) {
 }
 
 func normalizeMatchPath(pathValue string, root string) string {
+	return normalizeMatchPathWithMode(pathValue, root, matchModeRealpath)
+}
+
+type matchModeValue string
+
+const (
+	matchModeRealpath matchModeValue = "realpath"
+	matchModeLenient  matchModeValue = "lenient"
+)
+
+func normalizeMatchPathWithMode(pathValue string, root string, mode matchModeValue) string {
 	decoded := safePathUnescape(pathValue)
 	normalized := filepath.Clean(filepath.FromSlash(decoded))
 	rootDecoded := safePathUnescape(root)
@@ -324,7 +340,9 @@ func normalizeMatchPath(pathValue string, root string) string {
 		}
 	}
 
-	normalizedLower = normalizeTrackDash(normalizedLower)
+	if mode == matchModeLenient {
+		normalizedLower = normalizeTrackDash(normalizedLower)
+	}
 
 	return strings.TrimLeft(normalizedLower, string(os.PathSeparator))
 }
@@ -412,6 +430,156 @@ func matchesFilter(value string, filter string) bool {
 	return false
 }
 
+func normalizeRootPath(root string) string {
+	if root == "" {
+		return ""
+	}
+	decoded := safePathUnescape(root)
+	cleaned := filepath.Clean(filepath.FromSlash(decoded))
+	if cleaned == "." {
+		return ""
+	}
+	if cleaned != string(os.PathSeparator) {
+		cleaned = strings.TrimRight(cleaned, string(os.PathSeparator))
+	}
+	return cleaned
+}
+
+func coerceNonRootPath(root string) (string, bool) {
+	normalized := normalizeRootPath(root)
+	if normalized == string(os.PathSeparator) {
+		return "", true
+	}
+	return normalized, false
+}
+
+func buildRelativePathSet(songs []itunesInfo, root string) map[string]struct{} {
+	paths := make(map[string]struct{}, len(songs))
+	for _, song := range songs {
+		rel := normalizeMatchPathWithMode(song.Path(), root, matchModeRealpath)
+		if rel == "" {
+			continue
+		}
+		paths[rel] = struct{}{}
+	}
+	return paths
+}
+
+type pathCheckResult struct {
+	decoded    string
+	cleaned    string
+	relative   string
+	isAbsolute bool
+	isReal     bool
+	reason     string
+}
+
+func validateNavidromePath(raw string, musicRoot string, srcRelativePaths map[string]struct{}) pathCheckResult {
+	decoded := safePathUnescape(raw)
+	cleaned := filepath.Clean(filepath.FromSlash(decoded))
+	if cleaned == "." {
+		cleaned = ""
+	}
+
+	result := pathCheckResult{
+		decoded:    decoded,
+		cleaned:    cleaned,
+		isAbsolute: filepath.IsAbs(cleaned),
+		isReal:     true,
+	}
+
+	musicRoot = normalizeRootPath(musicRoot)
+	if result.isAbsolute {
+		if musicRoot != "" {
+			rootLower := strings.ToLower(musicRoot)
+			cleanLower := strings.ToLower(cleaned)
+			if cleanLower != rootLower {
+				prefix := rootLower
+				if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+					prefix += string(os.PathSeparator)
+				}
+				if !strings.HasPrefix(cleanLower, prefix) {
+					result.isReal = false
+					result.reason = "absolute path is outside the configured music root"
+					return result
+				}
+			}
+		}
+		return result
+	}
+
+	relative := strings.TrimLeft(cleaned, string(os.PathSeparator))
+	result.relative = relative
+	base := filepath.Base(relative)
+	if trackDashRegex.MatchString(base) {
+		if _, ok := srcRelativePaths[strings.ToLower(relative)]; !ok {
+			result.isReal = false
+			result.reason = "relative path uses a track-number dash pattern"
+			return result
+		}
+	}
+
+	if len(srcRelativePaths) > 0 {
+		if _, ok := srcRelativePaths[strings.ToLower(relative)]; ok {
+			return result
+		}
+	}
+
+	return result
+}
+
+func commonDirPrefix(a, b string) string {
+	aClean := filepath.Clean(filepath.FromSlash(safePathUnescape(a)))
+	bClean := filepath.Clean(filepath.FromSlash(safePathUnescape(b)))
+
+	if aClean == "." || bClean == "." {
+		return ""
+	}
+
+	aAbs := filepath.IsAbs(aClean)
+	bAbs := filepath.IsAbs(bClean)
+	aParts := strings.Split(strings.Trim(aClean, string(os.PathSeparator)), string(os.PathSeparator))
+	bParts := strings.Split(strings.Trim(bClean, string(os.PathSeparator)), string(os.PathSeparator))
+
+	limit := len(aParts)
+	if len(bParts) < limit {
+		limit = len(bParts)
+	}
+
+	commonParts := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		if strings.EqualFold(aParts[i], bParts[i]) {
+			commonParts = append(commonParts, aParts[i])
+		} else {
+			break
+		}
+	}
+
+	if len(commonParts) == 0 {
+		return ""
+	}
+
+	prefix := strings.Join(commonParts, string(os.PathSeparator))
+	if aAbs || bAbs {
+		prefix = string(os.PathSeparator) + prefix
+	}
+	return filepath.Clean(prefix)
+}
+
+func deriveMusicRoot(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	prefix := paths[0]
+	for _, p := range paths[1:] {
+		prefix = commonDirPrefix(prefix, p)
+		if prefix == "" {
+			break
+		}
+	}
+	return normalizeRootPath(prefix)
+}
+
 //func writeNavidromeSql(f io.Writer, tracks map[string]*track) error {
 //	fmt.Fprintln(f, "# sqlite3 navidrome.db < this_file.sql")
 //	fmt.Fprintln(f, "# Or if using Docker...")
@@ -482,6 +650,13 @@ func main() {
 		log.Fatal("Navidrome URL, username, and password are required.")
 	}
 
+	selectedMatchMode := matchModeValue(*matchMode)
+	switch selectedMatchMode {
+	case matchModeRealpath, matchModeLenient:
+	default:
+		log.Fatalf("Invalid --match_mode %q (expected %q or %q).", *matchMode, matchModeRealpath, matchModeLenient)
+	}
+
 	cfg.SubsonicURL = *subsonicUrl
 	cfg.SubsonicUser = subsonicUser
 	cfg.SubsonicPass = subsonicPass
@@ -535,11 +710,31 @@ func main() {
 		}
 	}
 
+	var derivedMusicRoot string
+	if *musicRoot != "" {
+		derivedMusicRoot = normalizeRootPath(*musicRoot)
+	} else if *itunesRoot != "" {
+		derivedMusicRoot = normalizeRootPath(*itunesRoot)
+	} else {
+		paths := make([]string, 0, len(srcSongs))
+		for _, song := range srcSongs {
+			if song.Path() == "" {
+				continue
+			}
+			paths = append(paths, song.Path())
+		}
+		derivedMusicRoot = deriveMusicRoot(paths)
+	}
+	if coerced, warned := coerceNonRootPath(derivedMusicRoot); warned {
+		log.Printf("Warning: detected music root was '/', treating as unknown to avoid incorrect trimming.")
+		derivedMusicRoot = coerced
+	}
+
 	c := &subsonic.Client{
 		Client:     &http.Client{},
 		BaseUrl:    *subsonicUrl,
 		User:       subsonicUser,
-		ClientName: "apple-music2navidrome",
+		ClientName: *subsonicClient,
 	}
 	if err := c.Authenticate(subsonicPass); err != nil {
 		log.Fatalf("Failed to create Navidrome client: %s", err)
@@ -547,6 +742,34 @@ func main() {
 
 	if *debugMode {
 		log.Printf("Filters: album=%q artist=%q name=%q path=%q limit=%d", *filterAlbum, *filterArtist, *filterName, *filterPath, *limitTracks)
+		log.Printf("Matching: mode=%q require_real_path=%t music_root=%q", selectedMatchMode, *requireRealPath, derivedMusicRoot)
+		log.Printf("Subsonic client: c=%q", *subsonicClient)
+	}
+
+	srcRelativePaths := buildRelativePathSet(srcSongs, *itunesRoot)
+
+	if *probeSongID != "" {
+		song, err := c.GetSong(*probeSongID)
+		if err != nil {
+			log.Fatalf("Failed to fetch song %q: %s", *probeSongID, err)
+		}
+		check := validateNavidromePath(song.Path, derivedMusicRoot, srcRelativePaths)
+		fmt.Fprintf(stdoutWriter, "Subsonic client c=%q\n", *subsonicClient)
+		fmt.Fprintf(stdoutWriter, "Probe song ID: %s\n", song.ID)
+		fmt.Fprintf(stdoutWriter, "Raw path: %q\n", song.Path)
+		fmt.Fprintf(stdoutWriter, "Decoded path: %q\n", check.decoded)
+		fmt.Fprintf(stdoutWriter, "Clean path: %q\n", check.cleaned)
+		if check.isAbsolute {
+			fmt.Fprintln(stdoutWriter, "Path type: absolute")
+		} else {
+			fmt.Fprintln(stdoutWriter, "Path type: relative")
+		}
+		if check.isReal {
+			fmt.Fprintln(stdoutWriter, "Real path validation: PASS")
+		} else {
+			fmt.Fprintf(stdoutWriter, "Real path validation: FAIL (%s)\n", check.reason)
+		}
+		return
 	}
 
 	fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching navidrome data"))
@@ -572,9 +795,65 @@ func main() {
 		log.Printf("Skipping auto library root detection because filters are active; matching full paths instead.")
 
 	}
+	if coerced, warned := coerceNonRootPath(*itunesRoot); warned {
+		log.Printf("Warning: detected src library root was '/', treating as empty to avoid incorrect trimming.")
+		*itunesRoot = coerced
+	}
+	if coerced, warned := coerceNonRootPath(*subsonicRoot); warned {
+		log.Printf("Warning: detected dst library root was '/', treating as empty to avoid incorrect trimming.")
+		*subsonicRoot = coerced
+	}
 	fmt.Fprintf(stdoutWriter, "Music library root: src='%s' dst='%s'\n", *itunesRoot, *subsonicRoot)
+
+	srcRelativePaths = buildRelativePathSet(srcSongs, *itunesRoot)
+	sampleCount := 200
+	if sampleCount > len(dstSongs) {
+		sampleCount = len(dstSongs)
+	}
+	var (
+		realCount       int
+		absoluteCount   int
+		relativeCount   int
+		suspiciousCount int
+		examples        []string
+	)
+	for i := 0; i < sampleCount; i++ {
+		song := dstSongs[i]
+		check := validateNavidromePath(song.Path(), derivedMusicRoot, srcRelativePaths)
+		if check.isAbsolute {
+			absoluteCount++
+		} else {
+			relativeCount++
+		}
+		if check.isReal {
+			realCount++
+			continue
+		}
+		suspiciousCount++
+		if len(examples) < 2 {
+			examples = append(examples, fmt.Sprintf("id=%s raw=%q reason=%s", song.Id(), song.Path(), check.reason))
+		}
+	}
+	if sampleCount > 0 {
+		log.Printf("Subsonic client c=%q; sampled %d path(s): %d real (%d absolute, %d relative), %d suspicious.",
+			*subsonicClient, sampleCount, realCount, absoluteCount, relativeCount, suspiciousCount)
+	}
+	threshold := 10
+	if sampleCount > 0 {
+		percentThreshold := int(0.05 * float64(sampleCount))
+		if percentThreshold > threshold {
+			threshold = percentThreshold
+		}
+	}
+	if *requireRealPath && suspiciousCount > threshold {
+		var exampleInfo string
+		if len(examples) > 0 {
+			exampleInfo = fmt.Sprintf(" Examples: %s.", strings.Join(examples, "; "))
+		}
+		log.Fatalf("Navidrome is returning virtual/tag-derived paths for Subsonic client c=%q. Enable “Report Real Path” for that player/client in Navidrome, choose a different --subsonic_client, or run with --require_real_path=false. You can also fall back to --match_mode=lenient.%s", *subsonicClient, exampleInfo)
+	}
 	if *dumpFile != "" {
-		if err := writeNavidromeDump(*dumpFile, dstSongs, *subsonicRoot); err != nil {
+		if err := writeNavidromeDump(*dumpFile, dstSongs, *subsonicRoot, selectedMatchMode); err != nil {
 			log.Fatalf("Failed to write Navidrome dump %q: %s", *dumpFile, err)
 		}
 		log.Printf("Wrote Navidrome dump to %s", *dumpFile)
@@ -583,7 +862,7 @@ func main() {
 	byPath := make(map[string]*songPair)
 	byTrackID := make(map[int]*songPair)
 	for _, s := range srcSongs {
-		p := normalizeMatchPath(s.Path(), *itunesRoot)
+		p := normalizeMatchPathWithMode(s.Path(), *itunesRoot, selectedMatchMode)
 		t, ok := byPath[p]
 		if !ok {
 			t = &songPair{}
@@ -593,7 +872,7 @@ func main() {
 		byTrackID[s.id] = t
 	}
 	for _, s := range dstSongs {
-		p := normalizeMatchPath(s.Path(), *subsonicRoot)
+		p := normalizeMatchPathWithMode(s.Path(), *subsonicRoot, selectedMatchMode)
 		if filterActive {
 			if _, ok := byPath[p]; !ok {
 				continue
