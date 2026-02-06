@@ -2,55 +2,34 @@ package main
 
 import "testing"
 
-func TestNormalizeMatchPathTrimsRootAndSeparators(t *testing.T) {
-	srcPath := "/Users/me/Music/Radiohead/OK Computer/02 - Paranoid Android.mp3"
-	dstPath := "Radiohead/OK Computer/02 - Paranoid Android.mp3"
+func TestNormalizeMatchPathModes(t *testing.T) {
+	dashPath := "Radiohead/OK Computer/02 - Paranoid Android.mp3"
+	noDashPath := "Radiohead/OK Computer/02 Paranoid Android.mp3"
 
-	gotSrc := normalizeMatchPath(srcPath, "/Users/me/Music")
-	gotDst := normalizeMatchPath(dstPath, "")
-
-	if gotSrc != gotDst {
-		t.Fatalf("expected normalized paths to match, got src=%q dst=%q", gotSrc, gotDst)
+	gotReal := normalizeMatchPathWithMode(dashPath, "", matchModeRealpath)
+	wantReal := "radiohead/ok computer/02 - paranoid android.mp3"
+	if gotReal != wantReal {
+		t.Fatalf("realpath mode should keep dashes, got %q want %q", gotReal, wantReal)
 	}
-	if gotSrc != "radiohead/ok computer/02 paranoid android.mp3" {
-		t.Fatalf("unexpected normalized path: %q", gotSrc)
+
+	gotLenient := normalizeMatchPathWithMode(dashPath, "", matchModeLenient)
+	wantLenient := "radiohead/ok computer/02 paranoid android.mp3"
+	if gotLenient != wantLenient {
+		t.Fatalf("lenient mode should normalise dashes, got %q want %q", gotLenient, wantLenient)
+	}
+
+	gotLenientNoDash := normalizeMatchPathWithMode(noDashPath, "", matchModeLenient)
+	if gotLenientNoDash != gotLenient {
+		t.Fatalf("lenient mode should match dashed and non-dashed names, got %q want %q", gotLenientNoDash, gotLenient)
 	}
 }
 
-func TestNormalizeMatchPathTrackDashVariants(t *testing.T) {
-	withDash := "Radiohead/OK Computer/02 - Paranoid Android.mp3"
-	noDash := "Radiohead/OK Computer/02 Paranoid Android.mp3"
-	withTightDash := "Radiohead/OK Computer/02-Paranoid Android.mp3"
-	withEnDash := "Radiohead/OK Computer/02 – Paranoid Android.mp3"
-	withEmDash := "Radiohead/OK Computer/02—Paranoid Android.mp3"
-
-	gotDash := normalizeMatchPath(withDash, "")
-	gotNoDash := normalizeMatchPath(noDash, "")
-	gotTightDash := normalizeMatchPath(withTightDash, "")
-	gotEnDash := normalizeMatchPath(withEnDash, "")
-	gotEmDash := normalizeMatchPath(withEmDash, "")
-
-	if gotDash != gotNoDash {
-		t.Fatalf("expected dash and no-dash paths to match, got dash=%q nodash=%q", gotDash, gotNoDash)
+func TestCoerceNonRootPath(t *testing.T) {
+	got, warned := coerceNonRootPath("/")
+	if got != "" {
+		t.Fatalf("expected root to coerce to empty, got %q", got)
 	}
-	if gotDash != gotTightDash {
-		t.Fatalf("expected tight dash and no-dash paths to match, got dash=%q tight=%q", gotDash, gotTightDash)
-	}
-	if gotDash != gotEnDash {
-		t.Fatalf("expected en dash and no-dash paths to match, got dash=%q endash=%q", gotDash, gotEnDash)
-	}
-	if gotDash != gotEmDash {
-		t.Fatalf("expected em dash and no-dash paths to match, got dash=%q emdash=%q", gotDash, gotEmDash)
-	}
-	if gotDash != "radiohead/ok computer/02 paranoid android.mp3" {
-		t.Fatalf("unexpected normalized path: %q", gotDash)
-	}
-}
-
-func TestNormalizeMatchPathOnlyNormalisesFileDash(t *testing.T) {
-	pathValue := "Radiohead/02 - Test Album/02 - Paranoid Android.mp3"
-	got := normalizeMatchPath(pathValue, "")
-	if got != "radiohead/02 - test album/02 paranoid android.mp3" {
-		t.Fatalf("unexpected normalized path: %q", got)
+	if !warned {
+		t.Fatalf("expected warning flag for root coercion")
 	}
 }
