@@ -60,40 +60,10 @@ Default extensions: `.mp3`, `.m4a`, `.flac`, `.ogg`, `.opus`, `.aac`, `.wav`, `.
 To analyse a large Navidrome dump file locally without uploading it:
 
 ```sh
-$ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --analyse_dump dump.json
+$ go run github.com/2600box/itunes2subsonic/cmd/itunes2subsonic --analyse_dump dump.json
 ```
 
 Include a missing report for reason summaries:
 
 ```sh
-$ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --analyse_dump dump.json --analyse_missing missing.json --analyse_report analysis.json
-```
-
-## Navidrome -> Navidrome
-
-Copies ratings set in a Navidrome server to a different Navidrome server. Safe to run on an ongoing basis, but there is insufficient data to identify "newer" ratings so best used to sync in one direction. 
-
-```sh
-$ export SUBSONIC_USER=navidrome_user
-$ export SUBSONIC_PASS="my navidrome password"
-$ export SUBSONIC_USER=ampache_user
-$ export SUBSONIC_PASS="my ampache password"
-$ go run github.com/logank/itunes2subsonic/cmd/subsonic2subsonic --subsonic_src="https://navidrome.example.com" --subsonic_dst="https://ampache.example.com" --dry_run=false
-```
-
-### subsonic2subsonic options
-
-* `--dry_run` (default: `true`): Don't modify the destination library.
-* `--skip_count` (default: `10`): Maximum number of errors to tolerate before stopping.
-* `--copy_unrated` (default: `false`): Clear destination ratings if source is unrated.
-* `--subsonic_src` (required): Source Navidrome base URL.
-* `--subsonic_dst` (required): Destination Navidrome base URL.
-* `--subsonic_src_root` (optional): Music library prefix for source paths.
-* `--subsonic_dst_root` (optional): Music library prefix for destination paths.
-
-## Apple Music -> Ampache
-
-Copies ratings set in Apple Music to an Ampache server. Safe to run on an ongoing basis (although it cannot sync back to Apple Music).
-
-> **Note**
-> Use the Navidrome sync instead; the Ampache API does not currently provide more advanced support.
+$ go run github.com/2600box/itunes2subsonic/cmd/itunes2subsonic --analyse_dump dump.json --analyse_missing missing.json --analyse_report analysis.
