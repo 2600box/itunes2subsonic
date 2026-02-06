@@ -211,20 +211,28 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 
 func writeNavidromeDump(path string, songs []subsonicInfo, root string) error {
 	type dumpEntry struct {
-		ID        string `json:"id"`
-		Path      string `json:"path"`
-		CleanPath string `json:"clean_path"`
-		MatchPath string `json:"match_path"`
+		ID          string `json:"id"`
+		Path        string `json:"path"`
+		RawPath     string `json:"raw_path"`
+		DecodedPath string `json:"decoded_path"`
+		CleanPath   string `json:"clean_path"`
+		MatchPath   string `json:"match_path"`
 	}
 	entries := make([]dumpEntry, 0, len(songs))
 	for _, song := range songs {
 		decoded := safePathUnescape(song.Path())
 		cleaned := filepath.Clean(filepath.FromSlash(decoded))
+		matchPath := normalizeMatchPath(song.Path(), root)
+		if *debugMode && song.Id() == "10c87dea0ab488cb39f7f607ea8c0f0d" {
+			log.Printf("Navidrome dump debug for %s: raw=%q decoded=%q clean=%q normalised=%q", song.Id(), song.Path(), decoded, cleaned, matchPath)
+		}
 		entries = append(entries, dumpEntry{
-			ID:        song.Id(),
-			Path:      song.Path(),
-			CleanPath: cleaned,
-			MatchPath: normalizeMatchPath(song.Path(), root),
+			ID:          song.Id(),
+			Path:        song.Path(),
+			RawPath:     song.Path(),
+			DecodedPath: decoded,
+			CleanPath:   cleaned,
+			MatchPath:   matchPath,
 		})
 	}
 	payload, err := json.MarshalIndent(entries, "", "  ")

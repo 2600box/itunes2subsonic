@@ -22,11 +22,13 @@ func TestNormalizeMatchPathTrackDashVariants(t *testing.T) {
 	noDash := "Radiohead/OK Computer/02 Paranoid Android.mp3"
 	withTightDash := "Radiohead/OK Computer/02-Paranoid Android.mp3"
 	withEnDash := "Radiohead/OK Computer/02 – Paranoid Android.mp3"
+	withEmDash := "Radiohead/OK Computer/02—Paranoid Android.mp3"
 
 	gotDash := normalizeMatchPath(withDash, "")
 	gotNoDash := normalizeMatchPath(noDash, "")
 	gotTightDash := normalizeMatchPath(withTightDash, "")
 	gotEnDash := normalizeMatchPath(withEnDash, "")
+	gotEmDash := normalizeMatchPath(withEmDash, "")
 
 	if gotDash != gotNoDash {
 		t.Fatalf("expected dash and no-dash paths to match, got dash=%q nodash=%q", gotDash, gotNoDash)
@@ -37,7 +39,18 @@ func TestNormalizeMatchPathTrackDashVariants(t *testing.T) {
 	if gotDash != gotEnDash {
 		t.Fatalf("expected en dash and no-dash paths to match, got dash=%q endash=%q", gotDash, gotEnDash)
 	}
+	if gotDash != gotEmDash {
+		t.Fatalf("expected em dash and no-dash paths to match, got dash=%q emdash=%q", gotDash, gotEmDash)
+	}
 	if gotDash != "radiohead/ok computer/02 paranoid android.mp3" {
 		t.Fatalf("unexpected normalized path: %q", gotDash)
+	}
+}
+
+func TestNormalizeMatchPathOnlyNormalisesFileDash(t *testing.T) {
+	pathValue := "Radiohead/02 - Test Album/02 - Paranoid Android.mp3"
+	got := normalizeMatchPath(pathValue, "")
+	if got != "radiohead/02 - test album/02 paranoid android.mp3" {
+		t.Fatalf("unexpected normalized path: %q", got)
 	}
 }
