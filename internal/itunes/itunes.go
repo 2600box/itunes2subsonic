@@ -58,6 +58,7 @@ type Track struct {
 	FileFolderCount     int `plist:"File Folder Count"`
 	LibraryFolderCount  int `plist:"Library Folder Count"`
 	Loved               bool
+	Favorited           bool
 	Disabled            bool
 	Comments            string
 	SortName            string `plist:"Sort Name"`

@@ -40,10 +40,13 @@ $ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --itunes_xml="App
 * `--limit_tracks` (default: `0`): Only sync the first N matching tracks (0 means no limit).
 * `--debug` (default: `false`): Enable debug logging for filters/matching.
 * `--log_file` (default: empty): Write logs to the specified file (logs still go to stderr).
+* `--write_missing` (default: empty): Write a JSON report of missing tracks to the given path.
 * `--created_file` (unused): Placeholder for writing SQL to update created timestamps.
 
 When filters are used, automatic library root detection is skipped; provide `--itunes_root` and
 `--subsonic_root` if the library paths differ between Apple Music and Navidrome.
+
+Path matching normalizes Unicode to NFC to handle macOS (NFD) vs Linux (NFC) filesystem differences.
 
 ## Navidrome -> Navidrome
 
