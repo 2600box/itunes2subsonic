@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,13 +38,15 @@ var (
 	copyUnrated     = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
 	subsonicUrl     = flag.String("subsonic", "", "url of the Navidrome instance")
 	updatePlay      = flag.Bool("update_played", true, "update play count and last played time")
-	syncStarred     = flag.Bool("sync_starred", true, "sync Apple Music loved tracks to Navidrome starred")
+	syncStarred     = flag.Bool("sync_starred", true, "sync Apple Music favourited/loved tracks to Navidrome starred")
 	syncPlaylist    = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
 	maxScrobbles    = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
 	createdFile     = flag.String("created_file", "", "a file to write SQL statements to update the created time")
 	itunesRoot      = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
 	subsonicRoot    = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
 	musicRoot       = flag.String("music_root", "", "(optional) root of the on-disk music folder for real-path checks")
+	extensionsFlag  = flag.String("extensions", "", "comma-separated list of file extensions to match (default: common audio types)")
+	verifySrcFiles  = flag.Bool("verify_src_files", false, "verify iTunes file paths exist on disk and classify stale entries")
 	filterAlbum     = flag.String("filter_album", "", "only sync tracks whose album contains this text")
 	filterArtist    = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
 	filterName      = flag.String("filter_name", "", "only sync tracks whose title contains this text")
@@ -52,6 +56,9 @@ var (
 	logFile         = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
 	dumpFile        = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
 	writeMissing    = flag.String("write_missing", "", "write missing track metadata to a JSON file")
+	analyseDump     = flag.String("analyse_dump", "", "analyse a Navidrome dump JSON file and print a summary")
+	analyseReport   = flag.String("analyse_report", "", "write analysis output from --analyse_dump to JSON")
+	analyseMissing  = flag.String("analyse_missing", "", "include an existing missing report when analysing a dump")
 	subsonicClient  = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
 	requireRealPath = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
 	matchMode       = flag.String("match_mode", "realpath", "path matching mode: realpath or lenient")
@@ -87,11 +94,22 @@ type itunesInfo struct {
 	playCount int
 	loved     bool
 	favorited bool
+	hasLoved  bool
+	hasFav    bool
 }
 
 func (s itunesInfo) Id() string          { return strconv.Itoa(s.id) }
 func (s itunesInfo) Path() string        { return s.path }
 func (s itunesInfo) FiveStarRating() int { return s.rating / 20 }
+func (s itunesInfo) IsFavourite() bool {
+	if s.hasFav {
+		return s.favorited
+	}
+	if s.hasLoved {
+		return s.loved
+	}
+	return false
+}
 
 type songPair struct {
 	src itunesInfo
@@ -105,10 +123,16 @@ type playlistRef struct {
 }
 
 type missingCounts struct {
-	SrcTotal   int `json:"src_total"`
-	DstTotal   int `json:"dst_total"`
-	MissingSrc int `json:"missing_src"`
-	MissingDst int `json:"missing_dst"`
+	SrcTotal                int            `json:"src_total"`
+	DstTotal                int            `json:"dst_total"`
+	EligibleSrcTotal        int            `json:"eligible_src_total"`
+	EligibleDstTotal        int            `json:"eligible_dst_total"`
+	ExcludedSrcByExt        map[string]int `json:"excluded_src_by_ext"`
+	ExcludedDstByExt        map[string]int `json:"excluded_dst_by_ext"`
+	InvalidSrcCount         int            `json:"invalid_src_count"`
+	StaleSrcMissingCount    int            `json:"stale_src_file_missing_on_disk"`
+	MissingSrcEligibleCount int            `json:"missing_src_count"`
+	MissingDstEligibleCount int            `json:"missing_dst_count"`
 }
 
 type missingSong struct {
@@ -124,6 +148,7 @@ type missingSong struct {
 
 type missingEntry struct {
 	Side     string       `json:"side"`
+	Reason   string       `json:"reason"`
 	MatchKey string       `json:"match_key"`
 	Src      *missingSong `json:"src,omitempty"`
 	Dst      *missingSong `json:"dst,omitempty"`
@@ -131,11 +156,37 @@ type missingEntry struct {
 
 type missingReport struct {
 	GeneratedAt     string         `json:"generated_at"`
+	Version         string         `json:"version,omitempty"`
 	MatchMode       string         `json:"match_mode"`
 	RequireRealPath bool           `json:"require_real_path"`
+	SubsonicClient  string         `json:"subsonic_client"`
 	MusicRoot       string         `json:"music_root"`
+	Extensions      []string       `json:"extensions"`
 	Counts          missingCounts  `json:"counts"`
 	Missing         []missingEntry `json:"missing"`
+}
+
+type analyseSummary struct {
+	Total               int                              `json:"total"`
+	AbsoluteCount       int                              `json:"absolute_count"`
+	RelativeCount       int                              `json:"relative_count"`
+	ExtensionCounts     map[string]int                   `json:"extension_counts"`
+	TopDirectories      map[string]int                   `json:"top_directories"`
+	MissingReasonCounts map[string]int                   `json:"missing_reason_counts,omitempty"`
+	MissingExamples     map[string][]missingEntrySummary `json:"missing_examples,omitempty"`
+}
+
+type missingEntrySummary struct {
+	Side     string `json:"side"`
+	Reason   string `json:"reason"`
+	MatchKey string `json:"match_key"`
+	Path     string `json:"path,omitempty"`
+}
+
+type dumpAnalysisReport struct {
+	GeneratedAt string         `json:"generated_at"`
+	DumpPath    string         `json:"dump_path"`
+	Summary     analyseSummary `json:"summary"`
 }
 
 type appConfig struct {
@@ -434,6 +485,24 @@ func safePathUnescape(value string) string {
 	return b.String()
 }
 
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	var revision string
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			revision = setting.Value
+			break
+		}
+	}
+	if revision != "" {
+		return revision
+	}
+	return info.Main.Version
+}
+
 func decodeHexByte(a, b byte) (byte, bool) {
 	hi, ok := hexValue(a)
 	if !ok {
@@ -476,6 +545,18 @@ func matchesFilter(value string, filter string) bool {
 	return false
 }
 
+func isFileBackedTrack(trackType string) bool {
+	return trackType == "" || strings.EqualFold(trackType, "File")
+}
+
+func isInvalidSrcPath(pathValue string) bool {
+	if strings.TrimSpace(pathValue) == "" {
+		return true
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(pathValue))
+	return cleaned == "." || cleaned == string(os.PathSeparator)
+}
+
 func normalizeRootPath(root string) string {
 	if root == "" {
 		return ""
@@ -507,13 +588,58 @@ func normalizeMusicRootPath(root string) string {
 	return normalized
 }
 
+var defaultExtensions = []string{".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".wav", ".aiff", ".alac"}
+
 func looksLikeAudioFile(pathValue string) bool {
 	switch strings.ToLower(filepath.Ext(pathValue)) {
-	case ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aiff", ".mp4":
+	case ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".wav", ".aiff", ".alac":
 		return true
 	default:
 		return false
 	}
+}
+
+func parseExtensions(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return append([]string{}, defaultExtensions...)
+	}
+	parts := strings.Split(raw, ",")
+	extensions := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.ToLower(strings.TrimSpace(part))
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, ".") {
+			trimmed = "." + trimmed
+		}
+		extensions = append(extensions, trimmed)
+	}
+	return extensions
+}
+
+func extensionAllowlist(extensions []string) map[string]struct{} {
+	allowlist := make(map[string]struct{}, len(extensions))
+	for _, ext := range extensions {
+		if ext == "" {
+			continue
+		}
+		allowlist[strings.ToLower(ext)] = struct{}{}
+	}
+	return allowlist
+}
+
+func extensionOfPath(pathValue string) string {
+	return strings.ToLower(filepath.Ext(pathValue))
+}
+
+func isExtensionAllowed(pathValue string, allowlist map[string]struct{}) (string, bool) {
+	ext := extensionOfPath(pathValue)
+	if ext == "" {
+		return ext, false
+	}
+	_, ok := allowlist[ext]
+	return ext, ok
 }
 
 func coerceNonRootPath(root string) (string, bool) {
@@ -670,7 +796,7 @@ func buildStarUpdates(pairs map[string]*songPair) ([]string, []string) {
 		if v.src.Id() == "" || v.dst.Id() == "" {
 			continue
 		}
-		srcLoved := v.src.loved || v.src.favorited
+		srcLoved := v.src.IsFavourite()
 		if srcLoved && !v.dst.starred {
 			toStar = append(toStar, v.dst.Id())
 		}
@@ -748,6 +874,209 @@ func buildMissingSongFromDst(dst subsonicInfo, includeDebug bool) *missingSong {
 	return entry
 }
 
+func runAnalyseDump(dumpPath string, missingPath string, reportPath string) error {
+	summary, err := analyseDumpFile(dumpPath)
+	if err != nil {
+		return err
+	}
+
+	if missingPath != "" {
+		reasonCounts, reasonExamples, err := analyseMissingReport(missingPath)
+		if err != nil {
+			return err
+		}
+		summary.MissingReasonCounts = reasonCounts
+		summary.MissingExamples = reasonExamples
+	}
+
+	report := dumpAnalysisReport{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		DumpPath:    dumpPath,
+		Summary:     summary,
+	}
+
+	printAnalyseSummary(summary)
+
+	if reportPath != "" {
+		return writeAnalyseReport(reportPath, report)
+	}
+	return nil
+}
+
+func analyseDumpFile(path string) (analyseSummary, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return analyseSummary{}, err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	tok, err := decoder.Token()
+	if err != nil {
+		return analyseSummary{}, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return analyseSummary{}, fmt.Errorf("expected JSON array in dump file %s", path)
+	}
+
+	extCounts := make(map[string]int)
+	topDirs := make(map[string]int)
+	var total, absCount, relCount int
+	for decoder.More() {
+		var entry struct {
+			Path        string `json:"path"`
+			DecodedPath string `json:"decoded_path"`
+			CleanPath   string `json:"clean_path"`
+		}
+		if err := decoder.Decode(&entry); err != nil {
+			return analyseSummary{}, err
+		}
+		total++
+		pathValue := firstNonEmpty(entry.CleanPath, entry.DecodedPath, entry.Path)
+		if pathValue == "" {
+			continue
+		}
+		decoded := safePathUnescape(pathValue)
+		cleaned := filepath.Clean(filepath.FromSlash(decoded))
+		cleaned = normalizeUnicodePath(cleaned)
+		if cleaned == "." {
+			continue
+		}
+		if filepath.IsAbs(cleaned) {
+			absCount++
+		} else {
+			relCount++
+		}
+		ext := extensionOfPath(cleaned)
+		if ext == "" {
+			ext = "<none>"
+		}
+		extCounts[ext]++
+		if top := topDirectory(cleaned); top != "" {
+			topDirs[top]++
+		}
+	}
+
+	return analyseSummary{
+		Total:           total,
+		AbsoluteCount:   absCount,
+		RelativeCount:   relCount,
+		ExtensionCounts: extCounts,
+		TopDirectories:  topDirs,
+	}, nil
+}
+
+func analyseMissingReport(path string) (map[string]int, map[string][]missingEntrySummary, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+
+	var report missingReport
+	if err := json.NewDecoder(file).Decode(&report); err != nil {
+		return nil, nil, err
+	}
+
+	reasonCounts := make(map[string]int)
+	reasonExamples := make(map[string][]missingEntrySummary)
+	for _, entry := range report.Missing {
+		reasonCounts[entry.Reason]++
+		if len(reasonExamples[entry.Reason]) >= 3 {
+			continue
+		}
+		var pathValue string
+		if entry.Src != nil {
+			pathValue = entry.Src.Path
+		} else if entry.Dst != nil {
+			pathValue = entry.Dst.Path
+		}
+		reasonExamples[entry.Reason] = append(reasonExamples[entry.Reason], missingEntrySummary{
+			Side:     entry.Side,
+			Reason:   entry.Reason,
+			MatchKey: entry.MatchKey,
+			Path:     pathValue,
+		})
+	}
+
+	return reasonCounts, reasonExamples, nil
+}
+
+func topDirectory(pathValue string) string {
+	cleaned := strings.TrimLeft(pathValue, string(os.PathSeparator))
+	if cleaned == "" {
+		return ""
+	}
+	parts := strings.Split(cleaned, string(os.PathSeparator))
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return filepath.Join(parts[0], parts[1])
+}
+
+func printAnalyseSummary(summary analyseSummary) {
+	fmt.Fprintln(stdoutWriter, "== Dump Analysis ==")
+	fmt.Fprintf(stdoutWriter, "Total entries: %d\n", summary.Total)
+	fmt.Fprintf(stdoutWriter, "Absolute paths: %d\n", summary.AbsoluteCount)
+	fmt.Fprintf(stdoutWriter, "Relative paths: %d\n", summary.RelativeCount)
+
+	fmt.Fprintln(stdoutWriter, "Top extensions:")
+	for _, item := range sortCounts(summary.ExtensionCounts, 12) {
+		fmt.Fprintf(stdoutWriter, "  %s: %d\n", item.Key, item.Value)
+	}
+
+	fmt.Fprintln(stdoutWriter, "Top directories:")
+	for _, item := range sortCounts(summary.TopDirectories, 10) {
+		fmt.Fprintf(stdoutWriter, "  %s: %d\n", item.Key, item.Value)
+	}
+
+	if len(summary.MissingReasonCounts) > 0 {
+		fmt.Fprintln(stdoutWriter, "Missing reasons:")
+		for _, item := range sortCounts(summary.MissingReasonCounts, 12) {
+			fmt.Fprintf(stdoutWriter, "  %s: %d\n", item.Key, item.Value)
+			if examples := summary.MissingExamples[item.Key]; len(examples) > 0 {
+				for _, example := range examples {
+					fmt.Fprintf(stdoutWriter, "    - %s (%s)\n", example.MatchKey, example.Path)
+				}
+			}
+		}
+	}
+}
+
+type sortedCount struct {
+	Key   string
+	Value int
+}
+
+func sortCounts(counts map[string]int, limit int) []sortedCount {
+	items := make([]sortedCount, 0, len(counts))
+	for key, value := range counts {
+		items = append(items, sortedCount{Key: key, Value: value})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Value == items[j].Value {
+			return items[i].Key < items[j].Key
+		}
+		return items[i].Value > items[j].Value
+	})
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}
+
+func writeAnalyseReport(path string, report dumpAnalysisReport) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	payload, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o600)
+}
+
 //func writeNavidromeSql(f io.Writer, tracks map[string]*track) error {
 //	fmt.Fprintln(f, "# sqlite3 navidrome.db < this_file.sql")
 //	fmt.Fprintln(f, "# Or if using Docker...")
@@ -769,6 +1098,12 @@ func buildMissingSongFromDst(dst subsonicInfo, includeDebug bool) *missingSong {
 
 func main() {
 	flag.Parse()
+	if *analyseDump != "" {
+		if err := runAnalyseDump(*analyseDump, *analyseMissing, *analyseReport); err != nil {
+			log.Fatalf("Failed to analyse dump %q: %s", *analyseDump, err)
+		}
+		return
+	}
 	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
 	var logFileHandle *os.File
 	if *logFile != "" {
@@ -826,6 +1161,12 @@ func main() {
 		log.Fatalf("Invalid --match_mode %q (expected %q or %q).", *matchMode, matchModeRealpath, matchModeLenient)
 	}
 
+	extensions := parseExtensions(*extensionsFlag)
+	allowlist := extensionAllowlist(extensions)
+	if len(allowlist) == 0 {
+		log.Fatal("No valid extensions were provided.")
+	}
+
 	cfg.SubsonicURL = *subsonicUrl
 	cfg.SubsonicUser = subsonicUser
 	cfg.SubsonicPass = subsonicPass
@@ -836,6 +1177,11 @@ func main() {
 	var srcSongs []itunesInfo
 	var playlistRefs []playlistRef
 	var matchedCount int
+	var srcTotal int
+	invalidSrcCount := 0
+	staleSrcCount := 0
+	excludedSrcByExt := make(map[string]int)
+	missingEntries := make([]missingEntry, 0)
 	if *itunesXml != "" {
 		f, err := os.Open(*itunesXml)
 		defer f.Close()
@@ -863,6 +1209,63 @@ func main() {
 				break
 			}
 			matchedCount++
+			srcTotal++
+
+			if !isFileBackedTrack(v.TrackType) || isInvalidSrcPath(loc) {
+				invalidSrcCount++
+				missingEntries = append(missingEntries, missingEntry{
+					Side:   "dst_missing",
+					Reason: "invalid_src_path",
+					Src: buildMissingSongFromSrc(itunesInfo{
+						id:     v.TrackId,
+						path:   loc,
+						name:   v.Name,
+						artist: v.Artist,
+						album:  v.Album,
+					}, *debugMode),
+				})
+				continue
+			}
+
+			ext, allowed := isExtensionAllowed(loc, allowlist)
+			if !allowed {
+				if ext == "" {
+					ext = "<none>"
+				}
+				excludedSrcByExt[ext]++
+				missingEntries = append(missingEntries, missingEntry{
+					Side:     "dst_missing",
+					Reason:   "excluded_extension",
+					MatchKey: normalizeMatchPathWithMode(loc, *itunesRoot, selectedMatchMode),
+					Src: buildMissingSongFromSrc(itunesInfo{
+						id:     v.TrackId,
+						path:   loc,
+						name:   v.Name,
+						artist: v.Artist,
+						album:  v.Album,
+					}, *debugMode),
+				})
+				continue
+			}
+
+			if *verifySrcFiles {
+				if _, err := os.Stat(loc); err != nil {
+					staleSrcCount++
+					missingEntries = append(missingEntries, missingEntry{
+						Side:     "dst_missing",
+						Reason:   "stale_src_file_missing_on_disk",
+						MatchKey: normalizeMatchPathWithMode(loc, *itunesRoot, selectedMatchMode),
+						Src: buildMissingSongFromSrc(itunesInfo{
+							id:     v.TrackId,
+							path:   loc,
+							name:   v.Name,
+							artist: v.Artist,
+							album:  v.Album,
+						}, *debugMode),
+					})
+					continue
+				}
+			}
 
 			srcSongs = append(srcSongs, itunesInfo{
 				id:        v.TrackId,
@@ -874,8 +1277,10 @@ func main() {
 				playDate:  v.PlayDateUTC,
 				dateAdded: v.DateAdded,
 				playCount: v.PlayCount,
-				loved:     v.Loved,
-				favorited: v.Favorited,
+				loved:     v.Loved != nil && *v.Loved,
+				favorited: v.Favorited != nil && *v.Favorited,
+				hasLoved:  v.Loved != nil,
+				hasFav:    v.Favorited != nil,
 			})
 		}
 	}
@@ -918,6 +1323,8 @@ func main() {
 	if *debugMode {
 		log.Printf("Filters: album=%q artist=%q name=%q path=%q limit=%d", *filterAlbum, *filterArtist, *filterName, *filterPath, *limitTracks)
 		log.Printf("Matching: mode=%q require_real_path=%t music_root=%q", selectedMatchMode, *requireRealPath, derivedMusicRoot)
+		log.Printf("Extensions: %s", strings.Join(extensions, ","))
+		log.Printf("Verify src files: %t", *verifySrcFiles)
 		log.Printf("Subsonic client: c=%q", *subsonicClient)
 	}
 
@@ -953,15 +1360,37 @@ func main() {
 		log.Fatalf("Failed fetching navidrome songs: %s", err)
 	}
 
-	log.Printf("Src track count %d, Dst track count %d\n", len(srcSongs), len(dstSongs))
+	excludedDstByExt := make(map[string]int)
+	dstEligible := make([]subsonicInfo, 0, len(dstSongs))
+	for _, song := range dstSongs {
+		decoded := safePathUnescape(song.Path())
+		cleaned := filepath.Clean(filepath.FromSlash(decoded))
+		ext, allowed := isExtensionAllowed(cleaned, allowlist)
+		if !allowed {
+			if ext == "" {
+				ext = "<none>"
+			}
+			excludedDstByExt[ext]++
+			missingEntries = append(missingEntries, missingEntry{
+				Side:     "src_missing",
+				Reason:   "excluded_extension",
+				MatchKey: normalizeMatchPathWithMode(song.Path(), *subsonicRoot, selectedMatchMode),
+				Dst:      buildMissingSongFromDst(song, *debugMode),
+			})
+			continue
+		}
+		dstEligible = append(dstEligible, song)
+	}
+
+	log.Printf("Src track count %d (eligible %d), Dst track count %d (eligible %d)\n", srcTotal, len(srcSongs), len(dstSongs), len(dstEligible))
 
 	if *itunesRoot == "" && *subsonicRoot == "" && !filterActive {
 		s := make([]i2s.SongInfo, 0, len(srcSongs))
 		for _, si := range srcSongs {
 			s = append(s, si)
 		}
-		d := make([]i2s.SongInfo, 0, len(dstSongs))
-		for _, si := range dstSongs {
+		d := make([]i2s.SongInfo, 0, len(dstEligible))
+		for _, si := range dstEligible {
 			d = append(d, si)
 		}
 		*itunesRoot, *subsonicRoot = i2s.LibraryPrefix(s, d)
@@ -1045,7 +1474,7 @@ func main() {
 		t.src = s
 		byTrackID[s.id] = t
 	}
-	for _, s := range dstSongs {
+	for _, s := range dstEligible {
 		p := normalizeMatchPathWithMode(s.Path(), *subsonicRoot, selectedMatchMode)
 		if filterActive {
 			if _, ok := byPath[p]; !ok {
@@ -1061,29 +1490,30 @@ func main() {
 	}
 
 	fmt.Fprintln(stdoutWriter, "== Missing Tracks ==")
-	missingCount := 0
 	missingSrcCount := 0
 	missingDstCount := 0
-	missingEntries := make([]missingEntry, 0)
 	for k, v := range byPath {
 		if v.src.Id() != "" && v.dst.Id() != "" {
 			continue
 		}
 
-		missingCount++
 		entry := missingEntry{
+			Reason:   "not_in_navidrome_index",
 			MatchKey: k,
 		}
 		if v.src.Id() == "" && v.dst.Id() != "" {
 			missingSrcCount++
 			entry.Side = "src_missing"
+			entry.Reason = "not_in_itunes_library"
 			entry.Dst = buildMissingSongFromDst(v.dst, *debugMode)
 		} else if v.dst.Id() == "" && v.src.Id() != "" {
 			missingDstCount++
 			entry.Side = "dst_missing"
+			entry.Reason = "not_in_navidrome_index"
 			entry.Src = buildMissingSongFromSrc(v.src, *debugMode)
 		} else {
 			entry.Side = "unknown_missing"
+			entry.Reason = "not_in_navidrome_index"
 			entry.Src = buildMissingSongFromSrc(v.src, *debugMode)
 			entry.Dst = buildMissingSongFromDst(v.dst, *debugMode)
 		}
@@ -1091,9 +1521,10 @@ func main() {
 		fmt.Fprintf(stdoutWriter, "%s\n\tmissing src(%s)\tdst(%s)\n", k, v.src.Id(), v.dst.Id())
 	}
 	fmt.Fprintln(stdoutWriter, "")
-	fmt.Fprintf(stdoutWriter, "== Missing Track Count %d / (%d + %d) ==\n", missingCount, len(srcSongs), len(dstSongs))
+	missingEligibleCount := missingSrcCount + missingDstCount
+	fmt.Fprintf(stdoutWriter, "== Missing Track Count %d / (%d + %d) ==\n", missingEligibleCount, len(srcSongs), len(dstEligible))
 
-	if 100*missingCount/(len(srcSongs)+len(dstSongs)) > 90 {
+	if len(srcSongs)+len(dstEligible) > 0 && 100*missingEligibleCount/(len(srcSongs)+len(dstEligible)) > 90 {
 		fmt.Fprintf(stdoutWriter, `Warning: Missing count is significant. Tips:
 * Verify that the libraries are configured for the same directory
 * Set --itunes_root and --subsonic_root to the correct values
@@ -1103,14 +1534,23 @@ func main() {
 	if *writeMissing != "" {
 		report := missingReport{
 			GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
+			Version:         buildVersion(),
 			MatchMode:       string(selectedMatchMode),
 			RequireRealPath: *requireRealPath,
+			SubsonicClient:  *subsonicClient,
 			MusicRoot:       derivedMusicRoot,
+			Extensions:      extensions,
 			Counts: missingCounts{
-				SrcTotal:   len(srcSongs),
-				DstTotal:   len(dstSongs),
-				MissingSrc: missingSrcCount,
-				MissingDst: missingDstCount,
+				SrcTotal:                srcTotal,
+				DstTotal:                len(dstSongs),
+				EligibleSrcTotal:        len(srcSongs),
+				EligibleDstTotal:        len(dstEligible),
+				ExcludedSrcByExt:        excludedSrcByExt,
+				ExcludedDstByExt:        excludedDstByExt,
+				InvalidSrcCount:         invalidSrcCount,
+				StaleSrcMissingCount:    staleSrcCount,
+				MissingSrcEligibleCount: missingSrcCount,
+				MissingDstEligibleCount: missingDstCount,
 			},
 			Missing: missingEntries,
 		}
@@ -1234,7 +1674,7 @@ func main() {
 	}
 
 	if *syncStarred {
-		fmt.Fprintln(stdoutWriter, "== Loved/Starred ==")
+		fmt.Fprintln(stdoutWriter, "== Favourited/Loved → Starred ==")
 		toStar, toUnstar := buildStarUpdates(byPath)
 		fmt.Fprintf(stdoutWriter, "== Sync %d Star / %d Unstar ==\n", len(toStar), len(toUnstar))
 		if *dryRun {
