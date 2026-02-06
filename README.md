@@ -2,8 +2,6 @@
 
 Personal project for copying ratings between music instances.
 
-Hiring folks, please don't judge me on this code. 😛
-
 ## Apple Music -> Navidrome
 
 Copies ratings, play counts, last played dates, loved (starred) tracks, and playlists set in Apple Music to Navidrome (via its Subsonic API). Safe to run on an ongoing basis (although it cannot sync back to Apple Music).
@@ -11,13 +9,6 @@ Copies ratings, play counts, last played dates, loved (starred) tracks, and play
 ```sh
 $ export SUBSONIC_USER=my_user
 $ export SUBSONIC_PASS="my navidrome password"
-$ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --itunes_xml="Apple Music Library.xml" --subsonic="https://navidrome.example.com" --dry_run=false
-```
-
-Use filters to test on a subset of tracks:
-
-```sh
-$ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --itunes_xml="Apple Music Library.xml" --subsonic="https://navidrome.example.com" --filter_album="OK Computer" --filter_artist="Radiohead" --limit_tracks=25 --dry_run=false
 ```
 
 ### itunes2subsonic options
