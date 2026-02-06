@@ -144,9 +144,9 @@ func TestIsFavouritePreference(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "favorited false beats loved",
+			name: "favorited false but loved true",
 			info: itunesInfo{favorited: false, loved: true, hasFav: true, hasLoved: true},
-			want: false,
+			want: true,
 		},
 		{
 			name: "loved fallback",
