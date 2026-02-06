@@ -54,6 +54,20 @@ func TestNormalizeMatchPathUnicode(t *testing.T) {
 	}
 }
 
+func TestNormalizeMatchPathUnicodeBjoerk(t *testing.T) {
+	nfc := "Music/Björk/Debut/01 - Human Behaviour.mp3"
+	nfd := norm.NFD.String(nfc)
+	if nfc == nfd {
+		t.Fatalf("expected NFC and NFD strings to differ")
+	}
+
+	gotNFC := normalizeMatchPathWithMode(nfc, "", matchModeRealpath)
+	gotNFD := normalizeMatchPathWithMode(nfd, "", matchModeRealpath)
+	if gotNFC != gotNFD {
+		t.Fatalf("expected unicode-normalized Björk paths to match, got %q vs %q", gotNFC, gotNFD)
+	}
+}
+
 func TestNormalizeMusicRootPathFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "02 Paranoid Android.mp3")
@@ -78,11 +92,11 @@ func TestValidateNavidromePathWithEmptyMusicRoot(t *testing.T) {
 func TestBuildStarUpdates(t *testing.T) {
 	pairs := map[string]*songPair{
 		"a": {
-			src: itunesInfo{loved: false, favorited: true, id: 1},
+			src: itunesInfo{loved: false, favorited: true, hasFav: true, id: 1},
 			dst: subsonicInfo{id: "star-me", starred: false},
 		},
 		"b": {
-			src: itunesInfo{loved: false, favorited: false, id: 2},
+			src: itunesInfo{loved: false, favorited: false, hasLoved: true, id: 2},
 			dst: subsonicInfo{id: "unstar-me", starred: true},
 		},
 	}
@@ -103,4 +117,36 @@ func containsString(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestIsFavouritePreference(t *testing.T) {
+	tests := []struct {
+		name string
+		info itunesInfo
+		want bool
+	}{
+		{
+			name: "favorited wins",
+			info: itunesInfo{favorited: true, loved: false, hasFav: true, hasLoved: true},
+			want: true,
+		},
+		{
+			name: "loved fallback",
+			info: itunesInfo{loved: true, hasLoved: true},
+			want: true,
+		},
+		{
+			name: "missing both",
+			info: itunesInfo{},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.info.IsFavourite(); got != tt.want {
+				t.Fatalf("IsFavourite()=%t want %t", got, tt.want)
+			}
+		})
+	}
 }
