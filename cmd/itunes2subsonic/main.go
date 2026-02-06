@@ -123,16 +123,18 @@ type playlistRef struct {
 }
 
 type missingCounts struct {
-	SrcTotal                int            `json:"src_total"`
-	DstTotal                int            `json:"dst_total"`
-	EligibleSrcTotal        int            `json:"eligible_src_total"`
-	EligibleDstTotal        int            `json:"eligible_dst_total"`
-	ExcludedSrcByExt        map[string]int `json:"excluded_src_by_ext"`
-	ExcludedDstByExt        map[string]int `json:"excluded_dst_by_ext"`
-	InvalidSrcCount         int            `json:"invalid_src_count"`
-	StaleSrcMissingCount    int            `json:"stale_src_file_missing_on_disk"`
-	MissingSrcEligibleCount int            `json:"missing_src_count"`
-	MissingDstEligibleCount int            `json:"missing_dst_count"`
+	SrcTotal                  int            `json:"src_total"`
+	SrcEligible               int            `json:"src_eligible"`
+	SrcRemoteCount            int            `json:"src_remote_count"`
+	SrcInvalidLocationCount   int            `json:"src_invalid_location_count"`
+	SrcExcludedExtensionCount int            `json:"src_excluded_extension_count"`
+	SrcStaleMissingCount      int            `json:"src_stale_missing_count"`
+	DstTotal                  int            `json:"dst_total"`
+	DstEligible               int            `json:"dst_eligible"`
+	ExcludedSrcByExt          map[string]int `json:"excluded_src_by_ext,omitempty"`
+	ExcludedDstByExt          map[string]int `json:"excluded_dst_by_ext,omitempty"`
+	MissingSrcEligibleCount   int            `json:"missing_src_count"`
+	MissingDstEligibleCount   int            `json:"missing_dst_count"`
 }
 
 type missingSong struct {
@@ -164,6 +166,10 @@ type missingReport struct {
 	Extensions      []string       `json:"extensions"`
 	Counts          missingCounts  `json:"counts"`
 	Missing         []missingEntry `json:"missing"`
+	InvalidSamples  []missingSong  `json:"invalid_src_samples,omitempty"`
+	RemoteSamples   []missingSong  `json:"remote_src_samples,omitempty"`
+	ExcludedSamples []missingSong  `json:"excluded_extension_samples,omitempty"`
+	StaleSamples    []missingSong  `json:"stale_src_samples,omitempty"`
 }
 
 type analyseSummary struct {
@@ -374,22 +380,59 @@ func chunkStrings(ids []string, size int) [][]string {
 	return chunks
 }
 
-func normalizeLocation(loc string) (string, error) {
-	if loc == "" {
-		return "", nil
+type locationParseResult struct {
+	raw     string
+	decoded string
+	parsed  string
+	ok      bool
+	reason  string
+}
+
+func parseLocation(raw string) locationParseResult {
+	result := locationParseResult{raw: raw}
+	if strings.TrimSpace(raw) == "" {
+		result.reason = "missing_or_invalid_location"
+		return result
 	}
-	parsed, err := url.Parse(loc)
+	parsed, err := url.Parse(raw)
 	if err == nil && parsed.Scheme != "" {
 		pathValue := parsed.Path
 		if pathValue == "" {
 			pathValue = parsed.Opaque
 		}
 		decoded := safePathUnescape(pathValue)
-		return filepath.Clean(filepath.FromSlash(decoded)), nil
+		result.decoded = decoded
+		if decoded == "" {
+			result.reason = "missing_or_invalid_location"
+			return result
+		}
+		parsedPath := filepath.Clean(filepath.FromSlash(decoded))
+		if parsedPath == "." {
+			result.reason = "missing_or_invalid_location"
+			return result
+		}
+		result.parsed = parsedPath
+		result.ok = true
+		return result
 	}
-
-	decoded := safePathUnescape(loc)
-	return filepath.Clean(filepath.FromSlash(decoded)), nil
+	if err != nil {
+		result.reason = "missing_or_invalid_location"
+		return result
+	}
+	decoded := safePathUnescape(raw)
+	result.decoded = decoded
+	if decoded == "" {
+		result.reason = "missing_or_invalid_location"
+		return result
+	}
+	parsedPath := filepath.Clean(filepath.FromSlash(decoded))
+	if parsedPath == "." {
+		result.reason = "missing_or_invalid_location"
+		return result
+	}
+	result.parsed = parsedPath
+	result.ok = true
+	return result
 }
 
 func normalizeMatchPath(pathValue string, root string) string {
@@ -545,16 +588,21 @@ func matchesFilter(value string, filter string) bool {
 	return false
 }
 
-func isFileBackedTrack(trackType string) bool {
-	return trackType == "" || strings.EqualFold(trackType, "File")
+func isRemoteTrack(track itunes.Track) bool {
+	if strings.EqualFold(track.TrackType, "Remote") {
+		return true
+	}
+	if track.AppleMusic {
+		return true
+	}
+	return strings.TrimSpace(track.Location) == ""
 }
 
-func isInvalidSrcPath(pathValue string) bool {
+func isInvalidParsedPath(pathValue string) bool {
 	if strings.TrimSpace(pathValue) == "" {
 		return true
 	}
-	cleaned := filepath.Clean(filepath.FromSlash(pathValue))
-	return cleaned == "." || cleaned == string(os.PathSeparator)
+	return pathValue == "." || pathValue == string(os.PathSeparator)
 }
 
 func normalizeRootPath(root string) string {
@@ -574,18 +622,23 @@ func normalizeRootPath(root string) string {
 }
 
 func normalizeMusicRootPath(root string) string {
+	normalized, _ := normalizeMusicRootPathWithInfo(root)
+	return normalized
+}
+
+func normalizeMusicRootPathWithInfo(root string) (string, bool) {
 	normalized := normalizeRootPath(root)
 	if normalized == "" {
-		return ""
+		return "", false
 	}
 	if looksLikeAudioFile(normalized) {
-		return normalizeRootPath(filepath.Dir(normalized))
+		return normalizeRootPath(filepath.Dir(normalized)), true
 	}
 	info, err := os.Stat(normalized)
 	if err == nil && !info.IsDir() {
-		return normalizeRootPath(filepath.Dir(normalized))
+		return normalizeRootPath(filepath.Dir(normalized)), true
 	}
-	return normalized
+	return normalized, false
 }
 
 var defaultExtensions = []string{".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".wav", ".aiff", ".alac"}
@@ -855,6 +908,37 @@ func buildMissingSongFromSrc(src itunesInfo, includeDebug bool) *missingSong {
 		entry.CleanPath = filepath.Clean(filepath.FromSlash(decoded))
 	}
 	return entry
+}
+
+func buildMissingSongFromTrack(track itunes.Track, location locationParseResult, includeDebug bool) *missingSong {
+	if track.TrackId == 0 {
+		return nil
+	}
+	entry := &missingSong{
+		ID:     strconv.Itoa(track.TrackId),
+		Path:   location.parsed,
+		Name:   track.Name,
+		Artist: track.Artist,
+		Album:  track.Album,
+	}
+	if includeDebug {
+		entry.RawPath = location.raw
+		entry.DecodedPath = location.decoded
+		entry.CleanPath = location.parsed
+	}
+	return entry
+}
+
+const srcSampleLimit = 20
+
+func appendSample(samples *[]missingSong, entry *missingSong) {
+	if entry == nil {
+		return
+	}
+	if len(*samples) >= srcSampleLimit {
+		return
+	}
+	*samples = append(*samples, *entry)
 }
 
 func buildMissingSongFromDst(dst subsonicInfo, includeDebug bool) *missingSong {
@@ -1178,9 +1262,15 @@ func main() {
 	var playlistRefs []playlistRef
 	var matchedCount int
 	var srcTotal int
-	invalidSrcCount := 0
-	staleSrcCount := 0
+	srcRemoteCount := 0
+	srcInvalidLocationCount := 0
+	srcExcludedExtensionCount := 0
+	srcStaleMissingCount := 0
 	excludedSrcByExt := make(map[string]int)
+	var invalidSrcSamples []missingSong
+	var remoteSrcSamples []missingSong
+	var excludedExtensionSamples []missingSong
+	var staleSrcSamples []missingSong
 	missingEntries := make([]missingEntry, 0)
 	if *itunesXml != "" {
 		f, err := os.Open(*itunesXml)
@@ -1197,12 +1287,17 @@ func main() {
 		}
 
 		for _, v := range library.Tracks {
-			loc, err := normalizeLocation(v.Location)
-			if err != nil {
-				log.Fatalf("Unexpected Apple Music location '%s': %s", v.Location, err)
+			location := parseLocation(v.Location)
+			filterPathValue := location.parsed
+			if filterPathValue == "" {
+				if location.decoded != "" {
+					filterPathValue = location.decoded
+				} else {
+					filterPathValue = location.raw
+				}
 			}
 
-			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(loc, *filterPath) {
+			if !matchesFilter(v.Album, *filterAlbum) || !matchesFilter(v.Artist, *filterArtist) || !matchesFilter(v.Name, *filterName) || !matchesFilter(filterPathValue, *filterPath) {
 				continue
 			}
 			if *limitTracks > 0 && matchedCount >= *limitTracks {
@@ -1211,65 +1306,40 @@ func main() {
 			matchedCount++
 			srcTotal++
 
-			if !isFileBackedTrack(v.TrackType) || isInvalidSrcPath(loc) {
-				invalidSrcCount++
-				missingEntries = append(missingEntries, missingEntry{
-					Side:   "dst_missing",
-					Reason: "invalid_src_path",
-					Src: buildMissingSongFromSrc(itunesInfo{
-						id:     v.TrackId,
-						path:   loc,
-						name:   v.Name,
-						artist: v.Artist,
-						album:  v.Album,
-					}, *debugMode),
-				})
+			if isRemoteTrack(v) {
+				srcRemoteCount++
+				appendSample(&remoteSrcSamples, buildMissingSongFromTrack(v, location, true))
 				continue
 			}
 
-			ext, allowed := isExtensionAllowed(loc, allowlist)
+			if !location.ok || isInvalidParsedPath(location.parsed) {
+				srcInvalidLocationCount++
+				appendSample(&invalidSrcSamples, buildMissingSongFromTrack(v, location, true))
+				continue
+			}
+
+			ext, allowed := isExtensionAllowed(location.parsed, allowlist)
 			if !allowed {
 				if ext == "" {
 					ext = "<none>"
 				}
 				excludedSrcByExt[ext]++
-				missingEntries = append(missingEntries, missingEntry{
-					Side:     "dst_missing",
-					Reason:   "excluded_extension",
-					MatchKey: normalizeMatchPathWithMode(loc, *itunesRoot, selectedMatchMode),
-					Src: buildMissingSongFromSrc(itunesInfo{
-						id:     v.TrackId,
-						path:   loc,
-						name:   v.Name,
-						artist: v.Artist,
-						album:  v.Album,
-					}, *debugMode),
-				})
+				srcExcludedExtensionCount++
+				appendSample(&excludedExtensionSamples, buildMissingSongFromTrack(v, location, true))
 				continue
 			}
 
 			if *verifySrcFiles {
-				if _, err := os.Stat(loc); err != nil {
-					staleSrcCount++
-					missingEntries = append(missingEntries, missingEntry{
-						Side:     "dst_missing",
-						Reason:   "stale_src_file_missing_on_disk",
-						MatchKey: normalizeMatchPathWithMode(loc, *itunesRoot, selectedMatchMode),
-						Src: buildMissingSongFromSrc(itunesInfo{
-							id:     v.TrackId,
-							path:   loc,
-							name:   v.Name,
-							artist: v.Artist,
-							album:  v.Album,
-						}, *debugMode),
-					})
+				if _, err := os.Stat(location.parsed); err != nil {
+					srcStaleMissingCount++
+					appendSample(&staleSrcSamples, buildMissingSongFromTrack(v, location, true))
 					continue
 				}
 			}
 
 			srcSongs = append(srcSongs, itunesInfo{
 				id:        v.TrackId,
-				path:      loc,
+				path:      location.parsed,
 				name:      v.Name,
 				artist:    v.Artist,
 				album:     v.Album,
@@ -1287,14 +1357,22 @@ func main() {
 
 	var derivedMusicRoot string
 	if *musicRoot != "" {
-		derivedMusicRoot = normalizeMusicRootPath(*musicRoot)
+		var warned bool
+		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*musicRoot)
+		if warned {
+			log.Printf("Warning: music_root %q looks like a file; using %q instead.", *musicRoot, derivedMusicRoot)
+		}
 	} else if filterActive {
 		derivedMusicRoot = ""
 		if *debugMode {
 			log.Printf("Skipping music_root derivation because filters are active and --music_root was not set.")
 		}
 	} else if *itunesRoot != "" {
-		derivedMusicRoot = normalizeMusicRootPath(*itunesRoot)
+		var warned bool
+		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*itunesRoot)
+		if warned {
+			log.Printf("Warning: itunes_root %q looks like a file; using %q for music_root derivation.", *itunesRoot, derivedMusicRoot)
+		}
 	} else {
 		paths := make([]string, 0, len(srcSongs))
 		for _, song := range srcSongs {
@@ -1303,7 +1381,11 @@ func main() {
 			}
 			paths = append(paths, song.Path())
 		}
-		derivedMusicRoot = normalizeMusicRootPath(deriveMusicRoot(paths))
+		var warned bool
+		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(deriveMusicRoot(paths))
+		if warned {
+			log.Printf("Warning: derived music root looks like a file; using %q instead.", derivedMusicRoot)
+		}
 	}
 	if coerced, warned := coerceNonRootPath(derivedMusicRoot); warned {
 		log.Printf("Warning: detected music root was '/', treating as unknown to avoid incorrect trimming.")
@@ -1371,18 +1453,14 @@ func main() {
 				ext = "<none>"
 			}
 			excludedDstByExt[ext]++
-			missingEntries = append(missingEntries, missingEntry{
-				Side:     "src_missing",
-				Reason:   "excluded_extension",
-				MatchKey: normalizeMatchPathWithMode(song.Path(), *subsonicRoot, selectedMatchMode),
-				Dst:      buildMissingSongFromDst(song, *debugMode),
-			})
 			continue
 		}
 		dstEligible = append(dstEligible, song)
 	}
 
-	log.Printf("Src track count %d (eligible %d), Dst track count %d (eligible %d)\n", srcTotal, len(srcSongs), len(dstSongs), len(dstEligible))
+	log.Printf("Src: total %d, eligible %d, remote %d, invalid_location %d, excluded_ext %d, stale_missing %d",
+		srcTotal, len(srcSongs), srcRemoteCount, srcInvalidLocationCount, srcExcludedExtensionCount, srcStaleMissingCount)
+	log.Printf("Dst: total %d, eligible %d", len(dstSongs), len(dstEligible))
 
 	if *itunesRoot == "" && *subsonicRoot == "" && !filterActive {
 		s := make([]i2s.SongInfo, 0, len(srcSongs))
@@ -1541,18 +1619,24 @@ func main() {
 			MusicRoot:       derivedMusicRoot,
 			Extensions:      extensions,
 			Counts: missingCounts{
-				SrcTotal:                srcTotal,
-				DstTotal:                len(dstSongs),
-				EligibleSrcTotal:        len(srcSongs),
-				EligibleDstTotal:        len(dstEligible),
-				ExcludedSrcByExt:        excludedSrcByExt,
-				ExcludedDstByExt:        excludedDstByExt,
-				InvalidSrcCount:         invalidSrcCount,
-				StaleSrcMissingCount:    staleSrcCount,
-				MissingSrcEligibleCount: missingSrcCount,
-				MissingDstEligibleCount: missingDstCount,
+				SrcTotal:                  srcTotal,
+				SrcEligible:               len(srcSongs),
+				SrcRemoteCount:            srcRemoteCount,
+				SrcInvalidLocationCount:   srcInvalidLocationCount,
+				SrcExcludedExtensionCount: srcExcludedExtensionCount,
+				SrcStaleMissingCount:      srcStaleMissingCount,
+				DstTotal:                  len(dstSongs),
+				DstEligible:               len(dstEligible),
+				ExcludedSrcByExt:          excludedSrcByExt,
+				ExcludedDstByExt:          excludedDstByExt,
+				MissingSrcEligibleCount:   missingSrcCount,
+				MissingDstEligibleCount:   missingDstCount,
 			},
-			Missing: missingEntries,
+			Missing:         missingEntries,
+			InvalidSamples:  invalidSrcSamples,
+			RemoteSamples:   remoteSrcSamples,
+			ExcludedSamples: excludedExtensionSamples,
+			StaleSamples:    staleSrcSamples,
 		}
 		if err := writeMissingReport(*writeMissing, report); err != nil {
 			log.Fatalf("Failed to write missing report %q: %s", *writeMissing, err)

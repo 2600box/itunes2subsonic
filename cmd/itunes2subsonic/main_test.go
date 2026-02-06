@@ -119,6 +119,19 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
+func TestParseLocationEmpty(t *testing.T) {
+	result := parseLocation("")
+	if result.ok {
+		t.Fatalf("expected empty location to be invalid")
+	}
+	if result.parsed != "" {
+		t.Fatalf("expected empty location parsed path to be empty, got %q", result.parsed)
+	}
+	if result.reason != "missing_or_invalid_location" {
+		t.Fatalf("expected missing_or_invalid_location reason, got %q", result.reason)
+	}
+}
+
 func TestIsFavouritePreference(t *testing.T) {
 	tests := []struct {
 		name string
@@ -131,9 +144,19 @@ func TestIsFavouritePreference(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "favorited false beats loved",
+			info: itunesInfo{favorited: false, loved: true, hasFav: true, hasLoved: true},
+			want: false,
+		},
+		{
 			name: "loved fallback",
 			info: itunesInfo{loved: true, hasLoved: true},
 			want: true,
+		},
+		{
+			name: "both false",
+			info: itunesInfo{favorited: false, loved: false, hasFav: true, hasLoved: true},
+			want: false,
 		},
 		{
 			name: "missing both",
