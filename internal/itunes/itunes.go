@@ -54,6 +54,7 @@ type Track struct {
 	ArtworkCount        int    `plist:"Artwork Count"`
 	PersistentId        string `plist:"Persistent ID"`
 	TrackType           string `plist:"Track Type"`
+	AppleMusic          bool   `plist:"Apple Music"`
 	Location            string
 	FileFolderCount     int `plist:"File Folder Count"`
 	LibraryFolderCount  int `plist:"Library Folder Count"`

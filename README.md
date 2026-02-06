@@ -28,7 +28,7 @@ $ go run github.com/logank/itunes2subsonic/cmd/itunes2subsonic --itunes_xml="App
 * `--skip_count` (default: `10`): Maximum number of errors to tolerate before stopping.
 * `--copy_unrated` (default: `false`): Clear Navidrome ratings if Apple Music is unrated.
 * `--update_played` (default: `true`): Sync play count and last played date.
-* `--sync_starred` (default: `true`): Sync loved tracks to Navidrome starred.
+* `--sync_starred` (default: `true`): Sync favorited/loved tracks to Navidrome starred.
 * `--sync_playlists` (default: `true`): Sync playlists.
 * `--max_scrobbles` (default: `250`): Max scrobbles per track when syncing play counts.
 * `--itunes_root` (optional): Music library prefix for Apple Music paths.
@@ -60,7 +60,7 @@ When syncing stars, Apple Music `Favorited` is preferred when present. If `Favor
 
 ### Missing reports
 
-Use `--write_missing` to generate a JSON report with counts, missing entries, and classifications (e.g., excluded extensions, invalid paths, stale files, not indexed by Navidrome, or present only in Navidrome). The default extension allowlist excludes video formats like `.mp4` unless added via `--extensions`.
+Use `--write_missing` to generate a JSON report with counts, missing entries, and classifications. Missing entries only include actionable mismatches between eligible Apple Music file-backed tracks and eligible Navidrome tracks. Apple Music streaming catalog entries (Track Type `Remote` / `Apple Music` true / missing `Location`) are excluded from matching, but are counted and sampled separately. The default extension allowlist excludes video formats like `.mp4` unless added via `--extensions`.
 
 Default extensions: `.mp3`, `.m4a`, `.flac`, `.ogg`, `.opus`, `.aac`, `.wav`, `.aiff`, `.alac`.
 
