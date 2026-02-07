@@ -19,6 +19,8 @@ type LibraryStats struct {
 	Loved         LibraryCounts `json:"loved"`
 	Rated         LibraryCounts `json:"rated"`
 	LovedAndRated LibraryCounts `json:"loved_and_rated"`
+	LovedOnly     LibraryCounts `json:"loved_only"`
+	RatedOnly     LibraryCounts `json:"rated_only"`
 }
 
 type PlanCountsBySource struct {
@@ -165,20 +167,79 @@ type SyncPlanPlaylists struct {
 }
 
 type SyncPlan struct {
-	Counts    SyncPlanCounts     `json:"counts"`
-	Loved     SyncPlanLoved      `json:"loved"`
-	Unstar    SyncPlanUnstar     `json:"unstar"`
-	Ratings   SyncPlanRatings    `json:"ratings"`
-	PlayCount SyncPlanPlayCounts `json:"play_counts"`
-	Playlists SyncPlanPlaylists  `json:"playlists"`
+	SchemaVersion    int                `json:"schema_version"`
+	GeneratedAt      string             `json:"generated_at"`
+	NavidromeSummary NavidromeSummary   `json:"navidrome_summary"`
+	Counts           SyncPlanCounts     `json:"counts"`
+	Loved            SyncPlanLoved      `json:"loved"`
+	Unstar           SyncPlanUnstar     `json:"unstar"`
+	Ratings          SyncPlanRatings    `json:"ratings"`
+	PlayCount        SyncPlanPlayCounts `json:"play_counts"`
+	Playlists        SyncPlanPlaylists  `json:"playlists"`
+}
+
+type NavidromeSummary struct {
+	TracksTotal  int `json:"navidrome_tracks_total"`
+	StarredTotal int `json:"navidrome_starred_total"`
+	RatedTotal   int `json:"navidrome_rated_total"`
+}
+
+type AppleDisaggregation struct {
+	TracksTotal         int `json:"tracks_total"`
+	TracksLocal         int `json:"tracks_local"`
+	TracksRemote        int `json:"tracks_remote"`
+	LovedTotal          int `json:"loved_total"`
+	LovedLocal          int `json:"loved_local"`
+	LovedRemote         int `json:"loved_remote"`
+	RatedTotal          int `json:"rated_total"`
+	RatedLocal          int `json:"rated_local"`
+	RatedRemote         int `json:"rated_remote"`
+	LovedAndRatedTotal  int `json:"loved_and_rated_total"`
+	LovedAndRatedLocal  int `json:"loved_and_rated_local"`
+	LovedAndRatedRemote int `json:"loved_and_rated_remote"`
+	LovedOnlyTotal      int `json:"loved_only_total"`
+	LovedOnlyLocal      int `json:"loved_only_local"`
+	LovedOnlyRemote     int `json:"loved_only_remote"`
+	RatedOnlyTotal      int `json:"rated_only_total"`
+	RatedOnlyLocal      int `json:"rated_only_local"`
+	RatedOnlyRemote     int `json:"rated_only_remote"`
+}
+
+type PlanCountsSummary struct {
+	PlanStarCount        int `json:"plan_star_count"`
+	PlanUnstarCount      int `json:"plan_unstar_count"`
+	PlanRateSetCount     int `json:"plan_rate_set_count"`
+	PlanRateUnsetCount   int `json:"plan_rate_unset_count"`
+	PlanPlaycountCount   int `json:"plan_playcount_count"`
+	PlanPlaylistOpsCount int `json:"plan_playlist_ops_count"`
+}
+
+type LovedReconcileSummary struct {
+	AppleLovedLocal                     int            `json:"apple_loved_local"`
+	NavidromeStarredTotal               int            `json:"navidrome_starred_total"`
+	LovedAlreadyStarredInNavidromeCount int            `json:"loved_already_starred_in_navidrome_count"`
+	PlanStarCount                       int            `json:"plan_star_count"`
+	PlanUnappliedLovedCount             int            `json:"plan_unapplied_loved_count"`
+	PlanUnappliedLovedByReason          map[string]int `json:"plan_unapplied_loved_by_reason"`
+}
+
+type ReconcileError struct {
+	Message    string         `json:"message"`
+	Expected   int            `json:"expected"`
+	Actual     int            `json:"actual"`
+	Components map[string]int `json:"components"`
 }
 
 type ReconcileReport struct {
-	GeneratedAt     string            `json:"generated_at"`
-	Library         LibraryStats      `json:"library"`
-	PlanCounts      SyncPlanCounts    `json:"plan_counts"`
-	LovedNotApplied []LovedPlanEntry  `json:"loved_not_applied"`
-	RatedNotApplied []RatingPlanEntry `json:"rated_not_applied"`
+	SchemaVersion       int                   `json:"schema_version"`
+	GeneratedAt         string                `json:"generated_at"`
+	Apple               AppleDisaggregation   `json:"apple"`
+	Navidrome           NavidromeSummary      `json:"navidrome"`
+	PlanCounts          PlanCountsSummary     `json:"plan_counts"`
+	LovedRecon          LovedReconcileSummary `json:"loved_reconciliation"`
+	PlanLovedNotApplied []LovedPlanEntry      `json:"plan_loved_not_applied"`
+	PlanRatedNotApplied []RatingPlanEntry     `json:"plan_rated_not_applied"`
+	ReconcileError      *ReconcileError       `json:"reconcile_error,omitempty"`
 }
 
 func WriteJSON(path string, payload interface{}) error {

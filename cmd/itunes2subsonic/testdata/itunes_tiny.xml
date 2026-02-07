@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Tracks</key>
+    <dict>
+      <key>1</key>
+      <dict>
+        <key>Track ID</key>
+        <integer>1</integer>
+        <key>Name</key>
+        <string>Track 1</string>
+        <key>Artist</key>
+        <string>Artist 1</string>
+        <key>Album</key>
+        <string>Album 1</string>
+        <key>Track Type</key>
+        <string>File</string>
+        <key>Location</key>
+        <string>file:///Music/Artist1/Album1/Track1.mp3</string>
+        <key>Rating</key>
+        <integer>60</integer>
+        <key>Favorited</key>
+        <true/>
+      </dict>
+      <key>2</key>
+      <dict>
+        <key>Track ID</key>
+        <integer>2</integer>
+        <key>Name</key>
+        <string>Track 2</string>
+        <key>Artist</key>
+        <string>Artist 1</string>
+        <key>Album</key>
+        <string>Album 1</string>
+        <key>Track Type</key>
+        <string>File</string>
+        <key>Location</key>
+        <string>file:///Music/Artist1/Album1/Track2.mp3</string>
+        <key>Rating</key>
+        <integer>0</integer>
+        <key>Loved</key>
+        <true/>
+      </dict>
+      <key>3</key>
+      <dict>
+        <key>Track ID</key>
+        <integer>3</integer>
+        <key>Name</key>
+        <string>Track 3</string>
+        <key>Artist</key>
+        <string>Artist 2</string>
+        <key>Album</key>
+        <string>Album 2</string>
+        <key>Track Type</key>
+        <string>File</string>
+        <key>Location</key>
+        <string>file:///Music/Artist2/Album2/Track3.mp3</string>
+        <key>Rating</key>
+        <integer>80</integer>
+      </dict>
+      <key>4</key>
+      <dict>
+        <key>Track ID</key>
+        <integer>4</integer>
+        <key>Name</key>
+        <string>Track 4</string>
+        <key>Artist</key>
+        <string>Artist 4</string>
+        <key>Album</key>
+        <string>Album 4</string>
+        <key>Track Type</key>
+        <string>Remote</string>
+        <key>Apple Music</key>
+        <true/>
+      </dict>
+      <key>5</key>
+      <dict>
+        <key>Track ID</key>
+        <integer>5</integer>
+        <key>Name</key>
+        <string>Track 5</string>
+        <key>Artist</key>
+        <string>Artist 3</string>
+        <key>Album</key>
+        <string>Album 3</string>
+        <key>Track Type</key>
+        <string>File</string>
+        <key>Location</key>
+        <string>file:///Music/Artist3/Album3/Track5.mp3</string>
+        <key>Rating</key>
+        <integer>0</integer>
+        <key>Loved</key>
+        <true/>
+      </dict>
+    </dict>
+    <key>Playlists</key>
+    <array/>
+  </dict>
+</plist>

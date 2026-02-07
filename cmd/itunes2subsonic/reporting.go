@@ -193,12 +193,31 @@ func buildLibraryStats(itunesXML string, filters filterOptions, applyFilters boo
 				stats.Rated.Local++
 			}
 		}
+		lovedOnly := loved && !rated
+		ratedOnly := rated && !loved
+
 		if loved && rated {
 			stats.LovedAndRated.Total++
 			if trackType == "Remote" {
 				stats.LovedAndRated.Remote++
 			} else {
 				stats.LovedAndRated.Local++
+			}
+		}
+		if lovedOnly {
+			stats.LovedOnly.Total++
+			if trackType == "Remote" {
+				stats.LovedOnly.Remote++
+			} else {
+				stats.LovedOnly.Local++
+			}
+		}
+		if ratedOnly {
+			stats.RatedOnly.Total++
+			if trackType == "Remote" {
+				stats.RatedOnly.Remote++
+			} else {
+				stats.RatedOnly.Local++
 			}
 		}
 	}
@@ -268,6 +287,9 @@ func loadAppleTracks(itunesXML string, filters filterOptions, allowlist map[stri
 		loved := isLovedTrack(track)
 		rated := track.Rating > 0
 
+		lovedOnly := loved && !rated
+		ratedOnly := rated && !loved
+
 		if includeFilteredInStats || !filteredOut {
 			if loved {
 				stats.Loved.Total++
@@ -291,6 +313,22 @@ func loadAppleTracks(itunesXML string, filters filterOptions, allowlist map[stri
 					stats.LovedAndRated.Remote++
 				} else {
 					stats.LovedAndRated.Local++
+				}
+			}
+			if lovedOnly {
+				stats.LovedOnly.Total++
+				if trackType == "Remote" {
+					stats.LovedOnly.Remote++
+				} else {
+					stats.LovedOnly.Local++
+				}
+			}
+			if ratedOnly {
+				stats.RatedOnly.Total++
+				if trackType == "Remote" {
+					stats.RatedOnly.Remote++
+				} else {
+					stats.RatedOnly.Local++
 				}
 			}
 		}
@@ -505,6 +543,12 @@ func runReportLibraryStats(itunesXML string, filters filterOptions, outJSON stri
 }
 
 func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool) error {
+	if planPath == "" {
+		return fmt.Errorf("--report_sync_plan requires a path")
+	}
+	if reportOnly && *dumpFile == "" {
+		return fmt.Errorf("--report_only requires --navidrome_dump to build a sync plan")
+	}
 	appleTracks, eligibleSrc, playlistRefs, stats, err := loadAppleTracks(itunesXML, filters, allowlist, *verifySrcFiles, true)
 	if err != nil {
 		return err
@@ -520,10 +564,7 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	}
 
 	var navidromeSongs []navidromeSong
-	if reportOnly && filterActive {
-		if *dumpFile == "" {
-			return fmt.Errorf("--report_only requires --navidrome_dump when filters are active")
-		}
+	if reportOnly {
 		entries, err := loadNavidromeDump(*dumpFile)
 		if err != nil {
 			return err
@@ -549,7 +590,15 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 		navidromeSongs = buildNavidromeSongsFromSearch(dstSongs, *subsonicRoot, selectedMatchMode, allowlist)
 	}
 
+	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	plan := report.SyncPlan{
+		SchemaVersion: 1,
+		GeneratedAt:   generatedAt,
+		NavidromeSummary: report.NavidromeSummary{
+			TracksTotal:  len(navidromeSongs),
+			StarredTotal: len(starredSongs),
+			RatedTotal:   countRatedNavidrome(navidromeSongs),
+		},
 		Counts: report.SyncPlanCounts{
 			AppleTracks:        stats.Tracks,
 			AppleLoved:         stats.Loved,
@@ -602,8 +651,7 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 			entry.Action = "wont_apply"
 			entry.NotAppliedReason = reason
 			plan.Loved.WontStar = append(plan.Loved.WontStar, entry)
-			plan.Counts.LovedNotApplied.Total++
-			plan.Counts.LovedNotApplied.ByReason[reason]++
+			incrementLovedNotApplied(&plan, info.trackType, reason)
 			continue
 		}
 		matches := navidromeByMatch[matchKey]
@@ -616,8 +664,7 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 			entry.Action = "wont_apply"
 			entry.NotAppliedReason = reason
 			plan.Loved.WontStar = append(plan.Loved.WontStar, entry)
-			plan.Counts.LovedNotApplied.Total++
-			plan.Counts.LovedNotApplied.ByReason[reason]++
+			incrementLovedNotApplied(&plan, info.trackType, reason)
 			continue
 		}
 		match := matches[0]
@@ -898,7 +945,11 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 
 	fmt.Fprintf(stdoutWriter, "Apple Tracks: total=%d local=%d remote=%d\n", plan.Counts.AppleTracks.Total, plan.Counts.AppleTracks.Local, plan.Counts.AppleTracks.Remote)
 	fmt.Fprintf(stdoutWriter, "Apple Loved: total=%d local=%d remote=%d\n", plan.Counts.AppleLoved.Total, plan.Counts.AppleLoved.Local, plan.Counts.AppleLoved.Remote)
+	fmt.Fprintf(stdoutWriter, "Apple Loved Only: total=%d local=%d remote=%d\n", stats.LovedOnly.Total, stats.LovedOnly.Local, stats.LovedOnly.Remote)
+	fmt.Fprintf(stdoutWriter, "Apple Loved & Rated: total=%d local=%d remote=%d\n", plan.Counts.AppleLovedAndRated.Total, plan.Counts.AppleLovedAndRated.Local, plan.Counts.AppleLovedAndRated.Remote)
 	fmt.Fprintf(stdoutWriter, "Apple Rated: total=%d local=%d remote=%d\n", plan.Counts.AppleRated.Total, plan.Counts.AppleRated.Local, plan.Counts.AppleRated.Remote)
+	fmt.Fprintf(stdoutWriter, "Apple Rated Only: total=%d local=%d remote=%d\n", stats.RatedOnly.Total, stats.RatedOnly.Local, stats.RatedOnly.Remote)
+	fmt.Fprintf(stdoutWriter, "Navidrome Starred Baseline: total=%d\n", plan.NavidromeSummary.StarredTotal)
 	fmt.Fprintf(stdoutWriter, "Planned Star: %d (local=%d remote=%d)\n", plan.Counts.PlannedStar.Total, plan.Counts.PlannedStar.Local, plan.Counts.PlannedStar.Remote)
 	fmt.Fprintf(stdoutWriter, "Planned Unstar: %d\n", plan.Counts.PlannedUnstar)
 	fmt.Fprintf(stdoutWriter, "Planned Ratings: set=%d unset=%d noop=%d\n", plan.Counts.PlannedRatingsSet, plan.Counts.PlannedRatingsUnset, plan.Counts.PlannedRatingsNoop)
@@ -908,35 +959,31 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	printReasonCounts(plan.Counts.LovedNotApplied.ByReason)
 	fmt.Fprintf(stdoutWriter, "Rated not applied: %d\n", plan.Counts.RatedNotApplied.Total)
 	printReasonCounts(plan.Counts.RatedNotApplied.ByReason)
+	printDryRunSummary(stats, plan)
 
 	if err := report.WriteJSON(planPath, plan); err != nil {
 		return err
 	}
 
 	planDir := filepath.Dir(planPath)
+	starPath := filepath.Join(planDir, "plan_star.tsv")
 	unstarPath := filepath.Join(planDir, "plan_unstar.tsv")
 	lovedNotAppliedPath := filepath.Join(planDir, "unapplied_loved.tsv")
 	ratedNotAppliedPath := filepath.Join(planDir, "unapplied_rated.tsv")
 	planTSVBase := *reportSyncPlanTSV
-	if err := report.WriteTSV(unstarPath, []string{
-		"navidrome_song_id", "navidrome_title", "navidrome_artist", "navidrome_album", "navidrome_path",
-		"apple_track_id", "apple_loved", "apple_path", "reason",
-	}, buildUnstarRows(plan.Unstar.WillUnstar)); err != nil {
+	if err := report.WriteTSV(starPath, planAuditHeader(), buildPlanStarRows(plan.Loved.WillStar, selectedMatchMode)); err != nil {
 		return err
 	}
-	if err := report.WriteTSV(lovedNotAppliedPath, []string{
-		"reason", "apple_track_id", "apple_name", "apple_artist", "apple_album", "apple_track_type",
-		"apple_rating", "apple_loved", "apple_path_raw", "apple_path_clean", "apple_match_key",
-		"navidrome_song_id", "navidrome_title", "navidrome_artist", "navidrome_album", "navidrome_path",
-	}, buildLovedNotAppliedRows(plan.Loved.WontStar)); err != nil {
+	if err := report.WriteTSV(unstarPath, planAuditHeader(), buildPlanUnstarRows(plan.Unstar.WillUnstar, selectedMatchMode)); err != nil {
 		return err
 	}
-	if err := report.WriteTSV(ratedNotAppliedPath, []string{
-		"reason", "apple_track_id", "apple_name", "apple_artist", "apple_album", "apple_track_type",
-		"apple_rating", "apple_loved", "apple_path_raw", "apple_path_clean", "apple_match_key",
-		"navidrome_song_id", "navidrome_title", "navidrome_artist", "navidrome_album", "navidrome_path",
-	}, buildRatedNotAppliedRows(plan.Ratings.WontSet)); err != nil {
+	if err := report.WriteTSV(lovedNotAppliedPath, planAuditHeader(), buildUnappliedLovedRows(plan.Loved.WontStar, selectedMatchMode)); err != nil {
 		return err
+	}
+	if len(plan.Ratings.WontSet) > 0 {
+		if err := report.WriteTSV(ratedNotAppliedPath, planAuditHeader(), buildUnappliedRatedRows(plan.Ratings.WontSet, selectedMatchMode)); err != nil {
+			return err
+		}
 	}
 	if planTSVBase != "" {
 		if err := writePlanTSV(planTSVBase, plan); err != nil {
@@ -947,9 +994,12 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	return nil
 }
 
-func runReportReconcile(itunesXML string, planPath string, reconcilePath string, filters filterOptions) error {
+func runReportReconcile(itunesXML string, planPath string, reconcilePath string, filters filterOptions, allowMismatch bool) error {
 	if planPath == "" {
 		return fmt.Errorf("--report_reconcile requires --report_sync_plan to supply plan counts")
+	}
+	if reconcilePath == "" {
+		return fmt.Errorf("--report_reconcile requires a path")
 	}
 	stats, err := buildLibraryStats(itunesXML, filters, true)
 	if err != nil {
@@ -963,14 +1013,94 @@ func runReportReconcile(itunesXML string, planPath string, reconcilePath string,
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return err
 	}
-	reconcile := report.ReconcileReport{
-		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
-		Library:         stats,
-		PlanCounts:      plan.Counts,
-		LovedNotApplied: plan.Loved.WontStar,
-		RatedNotApplied: plan.Ratings.WontSet,
+	apple := report.AppleDisaggregation{
+		TracksTotal:         stats.Tracks.Total,
+		TracksLocal:         stats.Tracks.Local,
+		TracksRemote:        stats.Tracks.Remote,
+		LovedTotal:          stats.Loved.Total,
+		LovedLocal:          stats.Loved.Local,
+		LovedRemote:         stats.Loved.Remote,
+		RatedTotal:          stats.Rated.Total,
+		RatedLocal:          stats.Rated.Local,
+		RatedRemote:         stats.Rated.Remote,
+		LovedAndRatedTotal:  stats.LovedAndRated.Total,
+		LovedAndRatedLocal:  stats.LovedAndRated.Local,
+		LovedAndRatedRemote: stats.LovedAndRated.Remote,
+		LovedOnlyTotal:      stats.LovedOnly.Total,
+		LovedOnlyLocal:      stats.LovedOnly.Local,
+		LovedOnlyRemote:     stats.LovedOnly.Remote,
+		RatedOnlyTotal:      stats.RatedOnly.Total,
+		RatedOnlyLocal:      stats.RatedOnly.Local,
+		RatedOnlyRemote:     stats.RatedOnly.Remote,
 	}
-	return report.WriteJSON(reconcilePath, reconcile)
+	planCounts := report.PlanCountsSummary{
+		PlanStarCount:        plan.Counts.PlannedStar.Total,
+		PlanUnstarCount:      plan.Counts.PlannedUnstar,
+		PlanRateSetCount:     plan.Counts.PlannedRatingsSet,
+		PlanRateUnsetCount:   plan.Counts.PlannedRatingsUnset,
+		PlanPlaycountCount:   plan.Counts.PlannedPlaycountUpdates,
+		PlanPlaylistOpsCount: len(plan.Playlists.Entries),
+	}
+	lovedAlreadyStarred := 0
+	for _, entry := range plan.Loved.Noop {
+		if entry.Reason != reasonAlreadyStarred {
+			continue
+		}
+		if strings.EqualFold(entry.Apple.TrackType, "Remote") {
+			continue
+		}
+		lovedAlreadyStarred++
+	}
+	unappliedLovedByReason := make(map[string]int)
+	unappliedLoved := 0
+	for _, entry := range plan.Loved.WontStar {
+		if strings.EqualFold(entry.Apple.TrackType, "Remote") {
+			continue
+		}
+		unappliedLoved++
+		if entry.NotAppliedReason != "" {
+			unappliedLovedByReason[entry.NotAppliedReason]++
+		}
+	}
+	lovedRecon := report.LovedReconcileSummary{
+		AppleLovedLocal:                     stats.Loved.Local,
+		NavidromeStarredTotal:               plan.NavidromeSummary.StarredTotal,
+		LovedAlreadyStarredInNavidromeCount: lovedAlreadyStarred,
+		PlanStarCount:                       plan.Counts.PlannedStar.Local,
+		PlanUnappliedLovedCount:             unappliedLoved,
+		PlanUnappliedLovedByReason:          unappliedLovedByReason,
+	}
+	reconcile := report.ReconcileReport{
+		SchemaVersion:       1,
+		GeneratedAt:         time.Now().UTC().Format(time.RFC3339),
+		Apple:               apple,
+		Navidrome:           plan.NavidromeSummary,
+		PlanCounts:          planCounts,
+		LovedRecon:          lovedRecon,
+		PlanLovedNotApplied: plan.Loved.WontStar,
+		PlanRatedNotApplied: plan.Ratings.WontSet,
+	}
+	expected := stats.Loved.Local
+	actual := lovedAlreadyStarred + plan.Counts.PlannedStar.Local + unappliedLoved
+	if expected != actual {
+		reconcile.ReconcileError = &report.ReconcileError{
+			Message:  "apple_loved_local did not match starred + planned + unapplied",
+			Expected: expected,
+			Actual:   actual,
+			Components: map[string]int{
+				"loved_already_starred_in_navidrome_count": lovedAlreadyStarred,
+				"plan_star_count":                          plan.Counts.PlannedStar.Local,
+				"plan_unapplied_loved_count":               unappliedLoved,
+			},
+		}
+	}
+	if err := report.WriteJSON(reconcilePath, reconcile); err != nil {
+		return err
+	}
+	if reconcile.ReconcileError != nil && !allowMismatch {
+		return fmt.Errorf("reconcile invariant failed: apple_loved_local=%d computed=%d (set --allow_reconcile_mismatch=true to override)", expected, actual)
+	}
+	return nil
 }
 
 func printReasonCounts(counts map[string]int) {
@@ -985,6 +1115,68 @@ func printReasonCounts(counts map[string]int) {
 	for _, key := range keys {
 		fmt.Fprintf(stdoutWriter, "  - %s: %d\n", key, counts[key])
 	}
+}
+
+func incrementLovedNotApplied(plan *report.SyncPlan, trackType string, reason string) {
+	if strings.EqualFold(trackType, "Remote") {
+		return
+	}
+	plan.Counts.LovedNotApplied.Total++
+	plan.Counts.LovedNotApplied.ByReason[reason]++
+}
+
+func countRatedNavidrome(songs []navidromeSong) int {
+	count := 0
+	for _, song := range songs {
+		if song.Rating > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func printDryRunSummary(stats report.LibraryStats, plan report.SyncPlan) {
+	fmt.Fprintln(stdoutWriter, "== Dry Run Summary ==")
+	fmt.Fprintf(stdoutWriter, "Apple Loved (local): %d\n", stats.Loved.Local)
+	fmt.Fprintf(stdoutWriter, "Apple Loved Only (local): %d\n", stats.LovedOnly.Local)
+	fmt.Fprintf(stdoutWriter, "Apple Loved & Rated (local): %d\n", stats.LovedAndRated.Local)
+	fmt.Fprintf(stdoutWriter, "Apple Rated Only (local): %d\n", stats.RatedOnly.Local)
+	fmt.Fprintf(stdoutWriter, "Navidrome Starred Baseline: %d\n", plan.NavidromeSummary.StarredTotal)
+	fmt.Fprintf(stdoutWriter, "Plan: star=%d unstar=%d\n", plan.Counts.PlannedStar.Total, plan.Counts.PlannedUnstar)
+	reasonSummary := topReasonSummary(plan.Counts.LovedNotApplied.ByReason, 5)
+	if reasonSummary == "" {
+		fmt.Fprintf(stdoutWriter, "Unapplied Loved: total=%d (top reasons: none)\n", plan.Counts.LovedNotApplied.Total)
+		return
+	}
+	fmt.Fprintf(stdoutWriter, "Unapplied Loved: total=%d (top reasons: %s)\n", plan.Counts.LovedNotApplied.Total, reasonSummary)
+}
+
+func topReasonSummary(counts map[string]int, limit int) string {
+	if len(counts) == 0 || limit <= 0 {
+		return ""
+	}
+	type reasonCount struct {
+		reason string
+		count  int
+	}
+	reasons := make([]reasonCount, 0, len(counts))
+	for reason, count := range counts {
+		reasons = append(reasons, reasonCount{reason: reason, count: count})
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].count != reasons[j].count {
+			return reasons[i].count > reasons[j].count
+		}
+		return reasons[i].reason < reasons[j].reason
+	})
+	if len(reasons) > limit {
+		reasons = reasons[:limit]
+	}
+	parts := make([]string, 0, len(reasons))
+	for _, entry := range reasons {
+		parts = append(parts, fmt.Sprintf("%s=%d", entry.reason, entry.count))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func sortLovedPlanEntries(entries []report.LovedPlanEntry) {
@@ -1083,79 +1275,102 @@ func compareNavidromeTrack(a report.NavidromeTrack, b report.NavidromeTrack) boo
 	return a.SongID < b.SongID
 }
 
-func buildUnstarRows(entries []report.UnstarPlanEntry) [][]string {
+func planAuditHeader() []string {
+	return []string{
+		"op",
+		"navidrome_id",
+		"apple_track_id",
+		"artist",
+		"album",
+		"title",
+		"path",
+		"reason_code",
+		"match_mode",
+		"match_confidence",
+	}
+}
+
+func buildPlanStarRows(entries []report.LovedPlanEntry, mode matchModeValue) [][]string {
+	rows := make([][]string, 0, len(entries))
+	for _, entry := range entries {
+		nav := entry.Navidrome
+		rows = append(rows, []string{
+			"star",
+			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.SongID }),
+			strconv.Itoa(entry.Apple.TrackID),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Artist }), entry.Apple.Artist),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Album }), entry.Apple.Album),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Title }), entry.Apple.Name),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Path }), entry.Apple.PathClean),
+			entry.Reason,
+			string(mode),
+			matchConfidence(entry.NotAppliedReason, nav),
+		})
+	}
+	return rows
+}
+
+func buildPlanUnstarRows(entries []report.UnstarPlanEntry, mode matchModeValue) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
 		appleID := ""
-		appleLoved := ""
-		applePath := ""
 		if entry.Apple != nil {
 			appleID = strconv.Itoa(entry.Apple.TrackID)
-			appleLoved = strconv.FormatBool(entry.Apple.Loved)
-			applePath = entry.Apple.PathClean
 		}
 		rows = append(rows, []string{
+			"unstar",
 			entry.Navidrome.SongID,
-			entry.Navidrome.Title,
+			appleID,
 			entry.Navidrome.Artist,
 			entry.Navidrome.Album,
+			entry.Navidrome.Title,
 			entry.Navidrome.Path,
-			appleID,
-			appleLoved,
-			applePath,
 			entry.Reason,
+			string(mode),
+			"matched",
 		})
 	}
 	return rows
 }
 
-func buildLovedNotAppliedRows(entries []report.LovedPlanEntry) [][]string {
+func buildUnappliedLovedRows(entries []report.LovedPlanEntry, mode matchModeValue) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
+		if strings.EqualFold(entry.Apple.TrackType, "Remote") {
+			continue
+		}
 		nav := entry.Navidrome
 		rows = append(rows, []string{
-			entry.NotAppliedReason,
-			strconv.Itoa(entry.Apple.TrackID),
-			entry.Apple.Name,
-			entry.Apple.Artist,
-			entry.Apple.Album,
-			entry.Apple.TrackType,
-			strconv.Itoa(entry.Apple.Rating),
-			strconv.FormatBool(entry.Apple.Loved),
-			entry.Apple.PathRaw,
-			entry.Apple.PathClean,
-			entry.Apple.MatchKey,
+			"star",
 			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.SongID }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Title }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Artist }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Album }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Path }),
+			strconv.Itoa(entry.Apple.TrackID),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Artist }), entry.Apple.Artist),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Album }), entry.Apple.Album),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Title }), entry.Apple.Name),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Path }), entry.Apple.PathClean),
+			entry.NotAppliedReason,
+			string(mode),
+			matchConfidence(entry.NotAppliedReason, nav),
 		})
 	}
 	return rows
 }
 
-func buildRatedNotAppliedRows(entries []report.RatingPlanEntry) [][]string {
+func buildUnappliedRatedRows(entries []report.RatingPlanEntry, mode matchModeValue) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
 		nav := entry.Navidrome
 		rows = append(rows, []string{
-			entry.NotAppliedReason,
-			strconv.Itoa(entry.Apple.TrackID),
-			entry.Apple.Name,
-			entry.Apple.Artist,
-			entry.Apple.Album,
-			entry.Apple.TrackType,
-			strconv.Itoa(entry.Apple.Rating),
-			strconv.FormatBool(entry.Apple.Loved),
-			entry.Apple.PathRaw,
-			entry.Apple.PathClean,
-			entry.Apple.MatchKey,
+			"rate",
 			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.SongID }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Title }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Artist }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Album }),
-			navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Path }),
+			strconv.Itoa(entry.Apple.TrackID),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Artist }), entry.Apple.Artist),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Album }), entry.Apple.Album),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Title }), entry.Apple.Name),
+			firstNonEmpty(navidromeValue(nav, func(n *report.NavidromeTrack) string { return n.Path }), entry.Apple.PathClean),
+			entry.NotAppliedReason,
+			string(mode),
+			matchConfidence(entry.NotAppliedReason, nav),
 		})
 	}
 	return rows
@@ -1166,6 +1381,18 @@ func navidromeValue(value *report.NavidromeTrack, getter func(*report.NavidromeT
 		return ""
 	}
 	return getter(value)
+}
+
+func matchConfidence(reason string, nav *report.NavidromeTrack) string {
+	if nav != nil {
+		return "matched"
+	}
+	switch reason {
+	case reasonAmbiguousMatchMultiple:
+		return "ambiguous"
+	default:
+		return "unmatched"
+	}
 }
 
 func ptrNavidromeTrack(track report.NavidromeTrack) *report.NavidromeTrack {
