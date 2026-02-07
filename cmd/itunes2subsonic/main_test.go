@@ -173,3 +173,15 @@ func TestIsFavouritePreference(t *testing.T) {
 		})
 	}
 }
+
+func TestFiveStarRatingScaling(t *testing.T) {
+	info := itunesInfo{rating: 80}
+	if got := info.FiveStarRating(); got != 4 {
+		t.Fatalf("expected 80 to map to 4 stars, got %d", got)
+	}
+
+	unrated := itunesInfo{rating: 0}
+	if got := unrated.FiveStarRating(); got != 0 {
+		t.Fatalf("expected 0 to map to 0 stars, got %d", got)
+	}
+}
