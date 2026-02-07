@@ -25,7 +25,11 @@ type auditResult struct {
 	Summary report.AuditSummary
 }
 
-func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, runDir string, force bool, failOnUnappliedLoved bool, remoteMatchPaths auditRemoteMatchPaths, remoteMatchConfig pkgreport.RemoteMatchConfig, remoteMatchDebug bool) (auditResult, error) {
+type auditOptions struct {
+	writeReconcile bool
+}
+
+func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, runDir string, force bool, failOnUnappliedLoved bool, remoteMatchPaths auditRemoteMatchPaths, remoteMatchConfig pkgreport.RemoteMatchConfig, remoteMatchDebug bool, options auditOptions) (auditResult, error) {
 	resolvedRunDir, err := ensureRunDir(runDir, force)
 	if err != nil {
 		return auditResult{}, err
@@ -54,6 +58,7 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 		return auditResult{}, err
 	}
 
+	logPhase("write_reports")
 	if err := writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, planTSVBase); err != nil {
 		return auditResult{}, err
 	}
@@ -72,8 +77,12 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 			return auditResult{}, err
 		}
 	}
-	if err := runReportReconcile(itunesXML, planPath, reconcilePath, filters, *allowReconcileMismatch); err != nil {
-		return auditResult{}, err
+	if options.writeReconcile {
+		if err := runReportReconcile(itunesXML, planPath, reconcilePath, filters, *allowReconcileMismatch); err != nil {
+			return auditResult{}, err
+		}
+	} else {
+		reconcilePath = ""
 	}
 
 	generatedAt := time.Now().UTC()
@@ -95,7 +104,7 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 	}
 
 	var remoteSummary *report.RemoteMatchSummary
-	if remoteMatchPaths.jsonPath != "" || remoteMatchPaths.tsvPath != "" {
+	if remoteMatchPaths.jsonPath != "" || remoteMatchPaths.tsvPath != "" || remoteMatchDebug {
 		remoteReport, err := runRemoteMatchReport(appleTracks, navidromeSongs, remoteMatchPaths, remoteMatchConfig, remoteMatchDebug)
 		if err != nil {
 			return auditResult{}, err
@@ -529,6 +538,9 @@ func formatReasonCounts(counts map[string]int) string {
 }
 
 func runRemoteMatchReport(appleTracks []appleTrackInfo, navidromeSongs []navidromeSong, paths auditRemoteMatchPaths, cfg pkgreport.RemoteMatchConfig, debug bool) (report.RemoteMatchReport, error) {
+	if paths.jsonPath == "" && paths.tsvPath == "" && !debug {
+		return report.RemoteMatchReport{}, nil
+	}
 	remoteTracks := make([]pkgreport.RemoteTrackInput, 0)
 	for _, info := range appleTracks {
 		if info.trackType != "Remote" {

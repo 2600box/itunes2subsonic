@@ -61,13 +61,13 @@ var (
 	analyseDump             = flag.String("analyse_dump", "", "analyse a Navidrome dump JSON file and print a summary")
 	analyseReport           = flag.String("analyse_report", "", "write analysis output from --analyse_dump to JSON")
 	analyseMissing          = flag.String("analyse_missing", "", "include an existing missing report when analysing a dump")
-	reportLibrary           = flag.String("report_library_stats", "", "write Library.xml stats report to JSON")
-	reportSyncPlan          = flag.String("report_sync_plan", "", "write sync plan report to JSON")
-	reportSyncPlanTSV       = flag.String("report_sync_plan_tsv", "", "write TSV sync plan reports using the given path as a base name")
-	reportReconcile         = flag.String("report_reconcile", "", "write reconcile report to JSON")
+	reportLibrary           = flag.String("report_library_stats", "", "write Library.xml stats report to JSON (empty disables)")
+	reportSyncPlan          = flag.String("report_sync_plan", "", "write sync plan report to JSON (empty disables)")
+	reportSyncPlanTSV       = flag.String("report_sync_plan_tsv", "", "write TSV sync plan reports using the given path as a base name (empty disables)")
+	reportReconcile         = flag.String("report_reconcile", "", "write reconcile report to JSON (empty disables)")
 	reportOutTSV            = flag.String("out_tsv", "", "write a TSV summary when reporting library stats")
-	reportRemoteMatchJSON   = flag.String("report_remote_match_json", "", "write remote loved/rated match report to JSON")
-	reportRemoteMatchTSV    = flag.String("report_remote_match_tsv", "", "write remote loved/rated match report to TSV")
+	reportRemoteMatchJSON   = flag.String("report_remote_match_json", "", "write remote loved/rated match report to JSON (empty disables)")
+	reportRemoteMatchTSV    = flag.String("report_remote_match_tsv", "", "write remote loved/rated match report to TSV (empty disables)")
 	reportOnly              = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
 	subsonicClient          = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
 	requireRealPath         = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
@@ -1655,6 +1655,12 @@ func main() {
 	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
 	var logFileHandle *os.File
 	if *logFile != "" {
+		logDir := filepath.Dir(*logFile)
+		if logDir != "." {
+			if err := os.MkdirAll(logDir, 0o700); err != nil {
+				log.Fatalf("Failed to create log directory %q: %s", logDir, err)
+			}
+		}
 		handle, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			log.Fatalf("Failed to open log file %q: %s", *logFile, err)
@@ -1779,7 +1785,10 @@ func main() {
 	notInNavidromeSamples := make([]missingEntry, 0)
 	notInNavidromeByExt := make(map[string]int)
 	notInNavidromeByDir := make(map[string]int)
-	if *itunesXml != "" {
+	var derivedMusicRoot string
+	var derivedMusicRootSource string
+	needsLocalScan := !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == ""
+	if needsLocalScan && *itunesXml != "" {
 		f, err := os.Open(*itunesXml)
 		defer f.Close()
 		if err != nil {
@@ -1870,49 +1879,47 @@ func main() {
 				hasFav:    v.Favorited != nil,
 			})
 		}
-	}
 
-	var derivedMusicRoot string
-	var derivedMusicRootSource string
-	if *musicRoot != "" {
-		var warned bool
-		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*musicRoot)
-		derivedMusicRootSource = "--music_root"
-		if warned {
-			log.Printf("Warning: music_root %q looks like a file; using %q instead.", *musicRoot, derivedMusicRoot)
-		}
-	} else if *itunesRoot != "" {
-		var warned bool
-		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*itunesRoot)
-		derivedMusicRootSource = "--itunes_root"
-		if warned {
-			log.Printf("Warning: itunes_root %q looks like a file; using %q for music_root derivation.", *itunesRoot, derivedMusicRoot)
-		}
-	} else {
-		paths := make([]string, 0, len(srcSongs))
-		for _, song := range srcSongs {
-			if song.Path() == "" {
-				continue
+		if *musicRoot != "" {
+			var warned bool
+			derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*musicRoot)
+			derivedMusicRootSource = "--music_root"
+			if warned {
+				log.Printf("Warning: music_root %q looks like a file; using %q instead.", *musicRoot, derivedMusicRoot)
 			}
-			paths = append(paths, song.Path())
+		} else if *itunesRoot != "" {
+			var warned bool
+			derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(*itunesRoot)
+			derivedMusicRootSource = "--itunes_root"
+			if warned {
+				log.Printf("Warning: itunes_root %q looks like a file; using %q for music_root derivation.", *itunesRoot, derivedMusicRoot)
+			}
+		} else {
+			paths := make([]string, 0, len(srcSongs))
+			for _, song := range srcSongs {
+				if song.Path() == "" {
+					continue
+				}
+				paths = append(paths, song.Path())
+			}
+			var warned bool
+			derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(deriveMusicRoot(paths))
+			if derivedMusicRoot != "" {
+				derivedMusicRootSource = "iTunes paths"
+			}
+			if warned {
+				log.Printf("Warning: derived music root looks like a file; using %q instead.", derivedMusicRoot)
+			}
 		}
-		var warned bool
-		derivedMusicRoot, warned = normalizeMusicRootPathWithInfo(deriveMusicRoot(paths))
-		if derivedMusicRoot != "" {
-			derivedMusicRootSource = "iTunes paths"
+		if coerced, warned := coerceNonRootPath(derivedMusicRoot); warned {
+			log.Printf("Warning: detected music root was '/', treating as unknown to avoid incorrect trimming.")
+			derivedMusicRoot = coerced
 		}
-		if warned {
-			log.Printf("Warning: derived music root looks like a file; using %q instead.", derivedMusicRoot)
+		if filterActive && derivedMusicRoot != "" && derivedMusicRootSource != "" {
+			log.Printf("Derived music_root=%q from %s (filters active).", derivedMusicRoot, derivedMusicRootSource)
+		} else if filterActive && derivedMusicRoot == "" && *debugMode {
+			log.Printf("Unable to derive music_root with filters active; diagnostics will omit root-based prefixes.")
 		}
-	}
-	if coerced, warned := coerceNonRootPath(derivedMusicRoot); warned {
-		log.Printf("Warning: detected music root was '/', treating as unknown to avoid incorrect trimming.")
-		derivedMusicRoot = coerced
-	}
-	if filterActive && derivedMusicRoot != "" && derivedMusicRootSource != "" {
-		log.Printf("Derived music_root=%q from %s (filters active).", derivedMusicRoot, derivedMusicRootSource)
-	} else if filterActive && derivedMusicRoot == "" && *debugMode {
-		log.Printf("Unable to derive music_root with filters active; diagnostics will omit root-based prefixes.")
 	}
 
 	c := &subsonic.Client{
@@ -1943,13 +1950,14 @@ func main() {
 			Threshold:    *remoteMatchThreshold,
 			LowThreshold: *remoteMatchLowThreshold,
 		}
+		options := auditOptions{writeReconcile: !*verifyFlag}
 		result, err := runAudit(c, *itunesXml, filterOptions{
 			album:  *filterAlbum,
 			artist: *filterArtist,
 			name:   *filterName,
 			path:   *filterPath,
 			limit:  *limitTracks,
-		}, allowlist, selectedMatchMode, filterActive, *reportOnly, *runDir, *force, *failOnUnappliedLoved, paths, cfg, *remoteMatchDebug)
+		}, allowlist, selectedMatchMode, filterActive, *reportOnly, *runDir, *force, *failOnUnappliedLoved, paths, cfg, *remoteMatchDebug, options)
 		if err != nil {
 			log.Fatalf("Audit failed: %s", err)
 		}
