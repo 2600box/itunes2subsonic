@@ -32,42 +32,45 @@ import (
 )
 
 var (
-	dryRun          = flag.Bool("dry_run", true, "don't modify the library")
-	itunesXml       = flag.String("itunes_xml", "Apple Music Library.xml", "path to the Apple Music Library XML to import")
-	skipCount       = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
-	copyUnrated     = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
-	subsonicUrl     = flag.String("subsonic", "", "url of the Navidrome instance")
-	updatePlay      = flag.Bool("update_played", true, "update play count and last played time")
-	syncStarred     = flag.Bool("sync_starred", true, "sync Apple Music favourited/loved tracks to Navidrome starred")
-	syncPlaylist    = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
-	maxScrobbles    = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
-	createdFile     = flag.String("created_file", "", "a file to write SQL statements to update the created time")
-	itunesRoot      = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
-	subsonicRoot    = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
-	musicRoot       = flag.String("music_root", "", "(optional) root of the on-disk music folder for real-path checks")
-	extensionsFlag  = flag.String("extensions", "", "comma-separated list of file extensions to match (default: common audio types)")
-	verifySrcFiles  = flag.Bool("verify_src_files", false, "verify iTunes file paths exist on disk and classify stale entries")
-	filterAlbum     = flag.String("filter_album", "", "only sync tracks whose album contains this text")
-	filterArtist    = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
-	filterName      = flag.String("filter_name", "", "only sync tracks whose title contains this text")
-	filterPath      = flag.String("filter_path", "", "only sync tracks whose path contains this text")
-	limitTracks     = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
-	debugMode       = flag.Bool("debug", false, "enable debug logging for filtering and matching")
-	logFile         = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
-	dumpFile        = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
-	writeMissing    = flag.String("write_missing", "", "write missing track metadata to a JSON file")
-	analyseDump     = flag.String("analyse_dump", "", "analyse a Navidrome dump JSON file and print a summary")
-	analyseReport   = flag.String("analyse_report", "", "write analysis output from --analyse_dump to JSON")
-	analyseMissing  = flag.String("analyse_missing", "", "include an existing missing report when analysing a dump")
-	reportLibrary   = flag.String("report_library_stats", "", "write Library.xml stats report to JSON")
-	reportSyncPlan  = flag.String("report_sync_plan", "", "write sync plan report to JSON")
-	reportOutTSV    = flag.String("out_tsv", "", "write a TSV summary when reporting library stats")
-	reportOnly      = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
-	subsonicClient  = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
-	requireRealPath = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
-	matchMode       = flag.String("match_mode", "realpath", "path matching mode: realpath or lenient")
-	probeSongID     = flag.String("probe_song_id", "", "if set, fetch /rest/getSong for the given ID and validate its path")
-	probePath       = flag.String("probe_path", "", "if set, normalise the path and check for matches in the Navidrome dump/index")
+	dryRun            = flag.Bool("dry_run", true, "don't modify the library")
+	itunesXml         = flag.String("itunes_xml", "Apple Music Library.xml", "path to the Apple Music Library XML to import")
+	skipCount         = flag.Int("skip_count", 10, "a limit on the number of tracks that would be skipped before refusing to process")
+	copyUnrated       = flag.Bool("copy_unrated", false, "if true, will unset rating if src is unrated")
+	subsonicUrl       = flag.String("subsonic", "", "url of the Navidrome instance")
+	updatePlay        = flag.Bool("update_played", true, "update play count and last played time")
+	syncStarred       = flag.Bool("sync_starred", true, "sync Apple Music favourited/loved tracks to Navidrome starred")
+	syncPlaylist      = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
+	maxScrobbles      = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
+	createdFile       = flag.String("created_file", "", "a file to write SQL statements to update the created time")
+	itunesRoot        = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
+	subsonicRoot      = flag.String("subsonic_root", "", "(optional) library prefix for Navidrome content")
+	musicRoot         = flag.String("music_root", "", "(optional) root of the on-disk music folder for real-path checks")
+	extensionsFlag    = flag.String("extensions", "", "comma-separated list of file extensions to match (default: common audio types)")
+	verifySrcFiles    = flag.Bool("verify_src_files", false, "verify iTunes file paths exist on disk and classify stale entries")
+	filterAlbum       = flag.String("filter_album", "", "only sync tracks whose album contains this text")
+	filterArtist      = flag.String("filter_artist", "", "only sync tracks whose artist contains this text")
+	filterName        = flag.String("filter_name", "", "only sync tracks whose title contains this text")
+	filterPath        = flag.String("filter_path", "", "only sync tracks whose path contains this text")
+	limitTracks       = flag.Int("limit_tracks", 0, "only sync the first N matching tracks (0 means no limit)")
+	debugMode         = flag.Bool("debug", false, "enable debug logging for filtering and matching")
+	logFile           = flag.String("log_file", "", "write logs to the specified file (defaults to stderr only)")
+	dumpFile          = flag.String("navidrome_dump", "", "write Navidrome track metadata (including raw paths) to a JSON file")
+	writeMissing      = flag.String("write_missing", "", "write missing track metadata to a JSON file")
+	analyseDump       = flag.String("analyse_dump", "", "analyse a Navidrome dump JSON file and print a summary")
+	analyseReport     = flag.String("analyse_report", "", "write analysis output from --analyse_dump to JSON")
+	analyseMissing    = flag.String("analyse_missing", "", "include an existing missing report when analysing a dump")
+	reportLibrary     = flag.String("report_library_stats", "", "write Library.xml stats report to JSON")
+	reportSyncPlan    = flag.String("report_sync_plan", "", "write sync plan report to JSON")
+	reportSyncPlanTSV = flag.String("report_sync_plan_tsv", "", "write TSV sync plan reports using the given path as a base name")
+	reportReconcile   = flag.String("report_reconcile", "", "write reconcile report to JSON")
+	reportOutTSV      = flag.String("out_tsv", "", "write a TSV summary when reporting library stats")
+	reportOnly        = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
+	subsonicClient    = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
+	requireRealPath   = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
+	matchMode         = flag.String("match_mode", "realpath", "path matching mode: realpath or lenient")
+	probeSongID       = flag.String("probe_song_id", "", "if set, fetch /rest/getSong for the given ID and validate its path")
+	probePath         = flag.String("probe_path", "", "if set, normalise the path and check for matches in the Navidrome dump/index")
+	allowUnstar       = flag.Bool("allow_unstar", false, "allow unstar operations when --dry_run=false")
 )
 
 var (
@@ -128,6 +131,12 @@ func (s itunesInfo) IsFavourite() bool {
 type songPair struct {
 	src itunesInfo
 	dst subsonicInfo
+}
+
+type unstarCandidate struct {
+	navidrome subsonicInfo
+	apple     itunesInfo
+	reason    string
 }
 
 type playlistRef struct {
@@ -350,6 +359,11 @@ type navidromeDumpEntry struct {
 	DecodedPath string `json:"decoded_path"`
 	CleanPath   string `json:"clean_path"`
 	MatchPath   string `json:"match_path"`
+	Title       string `json:"title,omitempty"`
+	Artist      string `json:"artist,omitempty"`
+	Album       string `json:"album,omitempty"`
+	Rating      int    `json:"rating,omitempty"`
+	PlayCount   int64  `json:"play_count,omitempty"`
 }
 
 func writeNavidromeDump(path string, songs []subsonicInfo, root string, mode matchModeValue) error {
@@ -368,6 +382,11 @@ func writeNavidromeDump(path string, songs []subsonicInfo, root string, mode mat
 			DecodedPath: decoded,
 			CleanPath:   cleaned,
 			MatchPath:   matchPath,
+			Title:       song.title,
+			Artist:      song.artist,
+			Album:       song.album,
+			Rating:      song.rating,
+			PlayCount:   song.playCount,
 		})
 	}
 	payload, err := json.MarshalIndent(entries, "", "  ")
@@ -996,6 +1015,56 @@ func buildStarUpdates(pairs map[string]*songPair) ([]string, []string) {
 		}
 	}
 	return toStar, toUnstar
+}
+
+func buildUnstarCandidates(pairs map[string]*songPair) []unstarCandidate {
+	candidates := make([]unstarCandidate, 0)
+	for _, v := range pairs {
+		if v.src.Id() == "" || v.dst.Id() == "" {
+			continue
+		}
+		if v.dst.starred && !v.src.IsFavourite() {
+			candidates = append(candidates, unstarCandidate{
+				navidrome: v.dst,
+				apple:     v.src,
+				reason:    reasonStarredNotLoved,
+			})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		a := candidates[i]
+		b := candidates[j]
+		if a.navidrome.artist != b.navidrome.artist {
+			return a.navidrome.artist < b.navidrome.artist
+		}
+		if a.navidrome.album != b.navidrome.album {
+			return a.navidrome.album < b.navidrome.album
+		}
+		if a.navidrome.title != b.navidrome.title {
+			return a.navidrome.title < b.navidrome.title
+		}
+		if a.navidrome.path != b.navidrome.path {
+			return a.navidrome.path < b.navidrome.path
+		}
+		return a.navidrome.id < b.navidrome.id
+	})
+	return candidates
+}
+
+func unstarIDs(candidates []unstarCandidate) []string {
+	ids := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{})
+	for _, entry := range candidates {
+		if entry.navidrome.id == "" {
+			continue
+		}
+		if _, ok := seen[entry.navidrome.id]; ok {
+			continue
+		}
+		seen[entry.navidrome.id] = struct{}{}
+		ids = append(ids, entry.navidrome.id)
+	}
+	return ids
 }
 
 func writeMissingReport(path string, report missingReport) error {
@@ -1695,7 +1764,7 @@ func main() {
 		log.Printf("Subsonic client: c=%q", *subsonicClient)
 	}
 
-	if *reportSyncPlan != "" {
+	if *reportSyncPlan != "" || *reportReconcile != "" {
 		filters := filterOptions{
 			album:  *filterAlbum,
 			artist: *filterArtist,
@@ -1703,8 +1772,15 @@ func main() {
 			path:   *filterPath,
 			limit:  *limitTracks,
 		}
-		if err := runReportSyncPlan(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly); err != nil {
-			log.Fatalf("Failed to report sync plan: %s", err)
+		if *reportSyncPlan != "" {
+			if err := runReportSyncPlan(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly); err != nil {
+				log.Fatalf("Failed to report sync plan: %s", err)
+			}
+		}
+		if *reportReconcile != "" {
+			if err := runReportReconcile(*itunesXml, *reportSyncPlan, *reportReconcile, filters); err != nil {
+				log.Fatalf("Failed to report reconcile summary: %s", err)
+			}
 		}
 		return
 	}
@@ -2146,11 +2222,34 @@ func main() {
 
 	if *syncStarred {
 		fmt.Fprintln(stdoutWriter, "== Favourited/Loved → Starred ==")
-		toStar, toUnstar := buildStarUpdates(byPath)
+		toStar, _ := buildStarUpdates(byPath)
+		unstarCandidates := buildUnstarCandidates(byPath)
+		toUnstar := unstarIDs(unstarCandidates)
 		fmt.Fprintf(stdoutWriter, "== Sync %d Star / %d Unstar ==\n", len(toStar), len(toUnstar))
+		if len(toUnstar) > 0 {
+			fmt.Fprintf(stdoutWriter, "== Unstar Candidates (%d) ==\n", len(toUnstar))
+			for _, entry := range unstarCandidates {
+				appleID := "-"
+				if entry.apple.id != 0 {
+					appleID = strconv.Itoa(entry.apple.id)
+				}
+				fmt.Fprintf(stdoutWriter, "UNSTAR\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					entry.navidrome.id,
+					entry.navidrome.artist,
+					entry.navidrome.album,
+					entry.navidrome.title,
+					entry.navidrome.path,
+					entry.reason,
+					appleID,
+				)
+			}
+		}
 		if *dryRun {
 			fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s\n", *subsonicUrl)
 		} else {
+			if len(toUnstar) > 0 && !*allowUnstar {
+				log.Fatalf("Unstar operations requested (%d). Re-run with --allow_unstar=true to proceed.", len(toUnstar))
+			}
 			skip := 0
 			if len(toStar) > 0 {
 				bar := i2s.PbWithOptions(pb.Default(int64(len(toStar)), "star tracks"))

@@ -38,6 +38,13 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--analyse_dump` (default: empty): Analyse a Navidrome dump JSON file and print a summary.
 * `--analyse_report` (default: empty): Write dump analysis output to JSON (used with `--analyse_dump`).
 * `--analyse_missing` (default: empty): Include an existing missing report in dump analysis.
+* `--report_library_stats` (default: empty): Write Library.xml stats report to JSON.
+* `--report_sync_plan` (default: empty): Write a detailed sync plan to JSON.
+* `--report_sync_plan_tsv` (default: empty): Write sync plan TSV reports using the given path as a base name.
+* `--report_reconcile` (default: empty): Write a reconcile report comparing Library.xml stats and sync plan counts (requires `--report_sync_plan`).
+* `--out_tsv` (default: empty): Write a TSV summary when reporting library stats.
+* `--report_only` (default: false): Avoid fetching the full Navidrome song list when filters are active (requires `--navidrome_dump`).
+* `--allow_unstar` (default: false): Allow unstar operations when `--dry_run=false`.
 * `--created_file` (unused): Placeholder for writing SQL to update created timestamps.
 
 When filters are used, automatic library root detection is skipped; provide `--itunes_root` and

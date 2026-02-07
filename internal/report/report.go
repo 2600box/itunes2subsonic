@@ -15,6 +15,7 @@ type LibraryCounts struct {
 }
 
 type LibraryStats struct {
+	Tracks        LibraryCounts `json:"tracks"`
 	Loved         LibraryCounts `json:"loved"`
 	Rated         LibraryCounts `json:"rated"`
 	LovedAndRated LibraryCounts `json:"loved_and_rated"`
@@ -32,13 +33,24 @@ type PlanReasonCounts struct {
 }
 
 type SyncPlanCounts struct {
-	AppleLoved      LibraryCounts      `json:"apple_loved"`
-	AppleRated      LibraryCounts      `json:"apple_rated"`
-	PlannedStar     PlanCountsBySource `json:"planned_star"`
-	PlannedUnstar   int                `json:"planned_unstar"`
-	PlannedRatings  int                `json:"planned_ratings"`
-	LovedNotApplied PlanReasonCounts   `json:"loved_not_applied"`
-	RatedNotApplied PlanReasonCounts   `json:"rated_not_applied"`
+	AppleTracks              LibraryCounts      `json:"apple_tracks"`
+	AppleLoved               LibraryCounts      `json:"apple_loved"`
+	AppleRated               LibraryCounts      `json:"apple_rated"`
+	AppleLovedAndRated       LibraryCounts      `json:"apple_loved_and_rated"`
+	PlannedStar              PlanCountsBySource `json:"planned_star"`
+	PlannedUnstar            int                `json:"planned_unstar"`
+	PlannedRatingsSet        int                `json:"planned_ratings_set"`
+	PlannedRatingsUnset      int                `json:"planned_ratings_unset"`
+	PlannedRatingsNoop       int                `json:"planned_ratings_noop"`
+	PlannedPlaycountUpdates  int                `json:"planned_playcount_updates"`
+	PlannedPlaycountNoop     int                `json:"planned_playcount_noop"`
+	PlannedPlaylistCreates   int                `json:"planned_playlist_creates"`
+	PlannedPlaylistUpdates   int                `json:"planned_playlist_updates"`
+	PlannedPlaylistNoop      int                `json:"planned_playlist_noop"`
+	PlannedPlaylistTrackAdds int                `json:"planned_playlist_track_adds"`
+	PlannedPlaylistRemoves   int                `json:"planned_playlist_track_removes"`
+	LovedNotApplied          PlanReasonCounts   `json:"loved_not_applied"`
+	RatedNotApplied          PlanReasonCounts   `json:"rated_not_applied"`
 }
 
 type AppleTrack struct {
@@ -64,12 +76,18 @@ type NavidromeTrack struct {
 }
 
 type LovedPlanEntry struct {
+	Operation        string          `json:"operation"`
+	Action           string          `json:"action"`
+	Reason           string          `json:"reason,omitempty"`
 	Apple            AppleTrack      `json:"apple"`
 	Navidrome        *NavidromeTrack `json:"navidrome,omitempty"`
 	NotAppliedReason string          `json:"not_applied_reason,omitempty"`
 }
 
 type RatingPlanEntry struct {
+	Operation        string          `json:"operation"`
+	Action           string          `json:"action"`
+	Reason           string          `json:"reason,omitempty"`
 	Apple            AppleTrack      `json:"apple"`
 	Navidrome        *NavidromeTrack `json:"navidrome,omitempty"`
 	DesiredRating    int             `json:"desired_rating,omitempty"`
@@ -77,6 +95,8 @@ type RatingPlanEntry struct {
 }
 
 type UnstarPlanEntry struct {
+	Operation string         `json:"operation"`
+	Action    string         `json:"action"`
 	Navidrome NavidromeTrack `json:"navidrome"`
 	Apple     *AppleTrack    `json:"apple_match,omitempty"`
 	Reason    string         `json:"reason"`
@@ -84,24 +104,81 @@ type UnstarPlanEntry struct {
 
 type SyncPlanLoved struct {
 	WillStar []LovedPlanEntry `json:"will_star"`
+	Noop     []LovedPlanEntry `json:"noop"`
 	WontStar []LovedPlanEntry `json:"wont_star"`
 }
 
 type SyncPlanUnstar struct {
 	WillUnstar []UnstarPlanEntry `json:"will_unstar"`
+	Noop       []UnstarPlanEntry `json:"noop,omitempty"`
 	WontUnstar []UnstarPlanEntry `json:"wont_unstar,omitempty"`
 }
 
 type SyncPlanRatings struct {
-	WillSet []RatingPlanEntry `json:"will_set"`
-	WontSet []RatingPlanEntry `json:"wont_set"`
+	WillSet   []RatingPlanEntry `json:"will_set"`
+	WillUnset []RatingPlanEntry `json:"will_unset"`
+	Noop      []RatingPlanEntry `json:"noop"`
+	WontSet   []RatingPlanEntry `json:"wont_set"`
+}
+
+type PlayCountPlanEntry struct {
+	Operation            string          `json:"operation"`
+	Action               string          `json:"action"`
+	Reason               string          `json:"reason,omitempty"`
+	Apple                AppleTrack      `json:"apple"`
+	Navidrome            *NavidromeTrack `json:"navidrome,omitempty"`
+	ApplePlayCount       int             `json:"apple_play_count,omitempty"`
+	AppleLastPlayed      string          `json:"apple_last_played,omitempty"`
+	NavidromePlayCount   int64           `json:"navidrome_play_count,omitempty"`
+	DesiredScrobbleCount int64           `json:"desired_scrobble_count,omitempty"`
+}
+
+type PlaylistTrackRef struct {
+	AppleTrackID    int    `json:"apple_track_id,omitempty"`
+	NavidromeSongID string `json:"navidrome_song_id,omitempty"`
+	Title           string `json:"title,omitempty"`
+	Artist          string `json:"artist,omitempty"`
+	Album           string `json:"album,omitempty"`
+	Path            string `json:"path,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+}
+
+type PlaylistPlanEntry struct {
+	Operation           string             `json:"operation"`
+	Action              string             `json:"action"`
+	Reason              string             `json:"reason,omitempty"`
+	Name                string             `json:"name"`
+	NavidromePlaylistID string             `json:"navidrome_playlist_id,omitempty"`
+	AddTracks           []PlaylistTrackRef `json:"add_tracks,omitempty"`
+	RemoveTracks        []PlaylistTrackRef `json:"remove_tracks,omitempty"`
+	MissingTracks       []PlaylistTrackRef `json:"missing_tracks,omitempty"`
+}
+
+type SyncPlanPlayCounts struct {
+	WillUpdate []PlayCountPlanEntry `json:"will_update"`
+	Noop       []PlayCountPlanEntry `json:"noop"`
+	WontUpdate []PlayCountPlanEntry `json:"wont_update"`
+}
+
+type SyncPlanPlaylists struct {
+	Entries []PlaylistPlanEntry `json:"entries"`
 }
 
 type SyncPlan struct {
-	Counts  SyncPlanCounts  `json:"counts"`
-	Loved   SyncPlanLoved   `json:"loved"`
-	Unstar  SyncPlanUnstar  `json:"unstar"`
-	Ratings SyncPlanRatings `json:"ratings"`
+	Counts    SyncPlanCounts     `json:"counts"`
+	Loved     SyncPlanLoved      `json:"loved"`
+	Unstar    SyncPlanUnstar     `json:"unstar"`
+	Ratings   SyncPlanRatings    `json:"ratings"`
+	PlayCount SyncPlanPlayCounts `json:"play_counts"`
+	Playlists SyncPlanPlaylists  `json:"playlists"`
+}
+
+type ReconcileReport struct {
+	GeneratedAt     string            `json:"generated_at"`
+	Library         LibraryStats      `json:"library"`
+	PlanCounts      SyncPlanCounts    `json:"plan_counts"`
+	LovedNotApplied []LovedPlanEntry  `json:"loved_not_applied"`
+	RatedNotApplied []RatingPlanEntry `json:"rated_not_applied"`
 }
 
 func WriteJSON(path string, payload interface{}) error {

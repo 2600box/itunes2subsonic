@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Tracks</key>
+  <dict>
+    <key>1</key>
+    <dict>
+      <key>Track ID</key><integer>1</integer>
+      <key>Name</key><string>Track One</string>
+      <key>Artist</key><string>Artist A</string>
+      <key>Album</key><string>Album A</string>
+      <key>Track Type</key><string>File</string>
+      <key>Location</key><string>file:///Music/Artist%20A/Album%20A/01%20Track%20One.mp3</string>
+      <key>Rating</key><integer>80</integer>
+      <key>Favorited</key><true/>
+      <key>Play Count</key><integer>5</integer>
+      <key>Play Date UTC</key><date>2024-01-02T03:04:05Z</date>
+    </dict>
+    <key>2</key>
+    <dict>
+      <key>Track ID</key><integer>2</integer>
+      <key>Name</key><string>Track Two</string>
+      <key>Artist</key><string>Artist A</string>
+      <key>Album</key><string>Album A</string>
+      <key>Track Type</key><string>File</string>
+      <key>Location</key><string>file:///Music/Artist%20A/Album%20A/02%20Track%20Two.mp3</string>
+      <key>Rating</key><integer>0</integer>
+      <key>Loved</key><true/>
+    </dict>
+    <key>3</key>
+    <dict>
+      <key>Track ID</key><integer>3</integer>
+      <key>Name</key><string>Remote Track</string>
+      <key>Artist</key><string>Artist B</string>
+      <key>Album</key><string>Album B</string>
+      <key>Track Type</key><string>Remote</string>
+      <key>Apple Music</key><true/>
+      <key>Loved</key><true/>
+      <key>Rating</key><integer>100</integer>
+    </dict>
+    <key>4</key>
+    <dict>
+      <key>Track ID</key><integer>4</integer>
+      <key>Name</key><string>Track Four</string>
+      <key>Artist</key><string>Artist C</string>
+      <key>Album</key><string>Album C</string>
+      <key>Track Type</key><string>File</string>
+      <key>Location</key><string>file:///Music/Artist%20C/Album%20C/04%20Track%20Four.mp3</string>
+      <key>Rating</key><integer>0</integer>
+    </dict>
+  </dict>
+  <key>Playlists</key>
+  <array>
+    <dict>
+      <key>Name</key><string>My Playlist</string>
+      <key>Master</key><false/>
+      <key>Playlist Items</key>
+      <array>
+        <dict><key>Track ID</key><integer>1</integer></dict>
+        <dict><key>Track ID</key><integer>2</integer></dict>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
