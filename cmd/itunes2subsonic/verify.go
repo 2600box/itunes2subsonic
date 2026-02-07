@@ -97,7 +97,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 		counts.NotAppliedByDomain[domain] = reasons
 	}
 
-	report := verifyReport{
+	vr := verifyReport{
 		SchemaVersion:         verifyReportSchemaVersion,
 		GeneratedAt:           time.Now().UTC().Format(time.RFC3339),
 		RunDir:                summary.Inputs.RunDir,
@@ -120,9 +120,9 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 		warnings = append(warnings, reason)
 	}
 
-	report.Go = true
+	vr.Go = true
 	if !summary.Inputs.RequireRealPath {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:     "require_real_path_disabled",
 			Message:  "require_real_path is disabled; verify is only GO when real paths are enforced",
@@ -131,7 +131,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 	}
 
 	if summary.PlanCounts.PlannedUnstar > 0 && !cfg.AllowUnstar {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:     "planned_unstar",
 			Domain:   "stars",
@@ -143,7 +143,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 
 	invalidStars := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainStars, reasonInvalidLocation)
 	if invalidStars > 0 {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:     reasonInvalidLocation,
 			Domain:   string(report.NotAppliedDomainStars),
@@ -154,7 +154,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 	}
 	invalidRatings := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainRatings, reasonInvalidLocation)
 	if invalidRatings > 0 {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:     reasonInvalidLocation,
 			Domain:   string(report.NotAppliedDomainRatings),
@@ -166,7 +166,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 
 	staleStars := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainStars, reasonStaleMissingOnDisk)
 	if staleStars > cfg.Thresholds.MaxStaleMissingStars {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:      reasonStaleMissingOnDisk,
 			Domain:    string(report.NotAppliedDomainStars),
@@ -178,7 +178,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 	}
 	staleRatings := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainRatings, reasonStaleMissingOnDisk)
 	if staleRatings > cfg.Thresholds.MaxStaleMissingRatings {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:      reasonStaleMissingOnDisk,
 			Domain:    string(report.NotAppliedDomainRatings),
@@ -190,7 +190,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 	}
 	stalePlays := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainPlaycounts, reasonStaleMissingOnDisk)
 	if stalePlays > cfg.Thresholds.MaxStaleMissingPlaycounts {
-		report.Go = false
+		vr.Go = false
 		addReason(verifyReason{
 			Code:      reasonStaleMissingOnDisk,
 			Domain:    string(report.NotAppliedDomainPlaycounts),
@@ -213,7 +213,7 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 		}
 		if cfg.Thresholds.PlaylistInvalidFatal {
 			reason.Severity = "error"
-			report.Go = false
+			vr.Go = false
 			addReason(reason)
 		} else {
 			addWarning(reason)
@@ -231,12 +231,12 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 		})
 	}
 
-	report.Reasons = reasons
-	report.Warnings = warnings
+	vr.Reasons = reasons
+	vr.Warnings = warnings
 
-	report.InspectFiles = suggestedInspectFiles(summary, reasons, warnings)
-	report.NextCommand = suggestedNextCommand(cfg, report.Go)
-	return report
+	vr.InspectFiles = suggestedInspectFiles(summary, reasons, warnings)
+	vr.NextCommand = suggestedNextCommand(cfg, vr.Go)
+	return vr
 }
 
 func countNotApplied(summary report.NotAppliedSummary, domain report.NotAppliedDomain, reason string) int {
