@@ -1,230 +1,296 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/delucks/go-subsonic"
 	"github.com/logank/itunes2subsonic/internal/report"
 )
 
-func TestSyncPlanGoldenCounts(t *testing.T) {
-	allowlist := extensionAllowlist(parseExtensions(""))
-	libraryPath := filepath.Join("testdata", "library.xml")
+const (
+	subsonicOKResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.8.0"></subsonic-response>`
+)
 
-	origItunesRoot := *itunesRoot
-	origSubsonicRoot := *subsonicRoot
-	origMatchMode := *matchMode
-	*itunesRoot = "/Music"
-	*subsonicRoot = "/Music"
-	*matchMode = string(matchModeRealpath)
-	defer func() {
-		*itunesRoot = origItunesRoot
-		*subsonicRoot = origSubsonicRoot
-		*matchMode = origMatchMode
-	}()
+func TestReportSyncPlanReportOnlyWritesArtifacts(t *testing.T) {
+	t.Helper()
 
-	appleTracks, _, _, stats, err := loadAppleTracks(libraryPath, filterOptions{}, allowlist, false, true)
-	if err != nil {
-		t.Fatalf("failed to load apple tracks: %s", err)
+	server := newSubsonicTestServer()
+	defer server.Close()
+
+	client := &subsonic.Client{
+		Client:     server.Client(),
+		BaseUrl:    server.URL,
+		User:       "tester",
+		ClientName: "itunes2subsonic-test",
 	}
-	if stats.Loved.Local != 2 || stats.Loved.Remote != 1 {
-		t.Fatalf("expected loved stats local=2 remote=1, got local=%d remote=%d", stats.Loved.Local, stats.Loved.Remote)
+	if err := client.Authenticate("pass"); err != nil {
+		t.Fatalf("authenticate: %v", err)
 	}
 
-	dumpPath := filepath.Join("testdata", "navidrome_dump.json")
-	entries, err := loadNavidromeDump(dumpPath)
-	if err != nil {
-		t.Fatalf("failed to load navidrome dump: %s", err)
-	}
-	navidromeSongs := buildNavidromeSongsFromDump(entries, *subsonicRoot, matchModeRealpath, allowlist)
+	tempDir := t.TempDir()
+	planPath := filepath.Join(tempDir, "sync_plan.json")
+	reconcilePath := filepath.Join(tempDir, "reconcile.json")
+	filters := filterOptions{path: "Music"}
+	allowlist := map[string]struct{}{".mp3": {}}
 
-	plan := buildStarUnstarPlanForTest(appleTracks, stats, allowlist, navidromeSongs, nil, matchModeRealpath)
-	if plan.Counts.PlannedStar.Total != 2 {
-		t.Fatalf("expected 2 planned stars, got %d", plan.Counts.PlannedStar.Total)
+	resetFlags := setTestFlags(map[*string]string{
+		dumpFile:     filepath.Join("testdata", "navidrome_dump.json"),
+		itunesRoot:   "",
+		subsonicRoot: "",
+		matchMode:    string(matchModeRealpath),
+	})
+	defer resetFlags()
+	resetBoolFlags := setTestBoolFlags(map[*bool]bool{
+		verifySrcFiles: false,
+		copyUnrated:    false,
+		updatePlay:     false,
+	})
+	defer resetBoolFlags()
+
+	if err := runReportSyncPlan(client, filepath.Join("testdata", "itunes_tiny.xml"), planPath, filters, allowlist, matchModeRealpath, true, true); err != nil {
+		t.Fatalf("runReportSyncPlan: %v", err)
 	}
-	if len(plan.Loved.WontStar) != 1 {
-		t.Fatalf("expected 1 loved track not applied, got %d", len(plan.Loved.WontStar))
+	if err := runReportReconcile(filepath.Join("testdata", "itunes_tiny.xml"), planPath, reconcilePath, filters, false); err != nil {
+		t.Fatalf("runReportReconcile: %v", err)
 	}
-	if plan.Loved.WontStar[0].NotAppliedReason != reasonRemoteNoLocalMapping {
-		t.Fatalf("expected %q, got %q", reasonRemoteNoLocalMapping, plan.Loved.WontStar[0].NotAppliedReason)
+
+	assertFileExists(t, planPath)
+	assertFileExists(t, reconcilePath)
+
+	plan := readPlan(t, planPath)
+	planStarRows := countTSVRows(t, filepath.Join(tempDir, "plan_star.tsv"))
+	planUnstarRows := countTSVRows(t, filepath.Join(tempDir, "plan_unstar.tsv"))
+	unappliedLovedRows := countTSVRows(t, filepath.Join(tempDir, "unapplied_loved.tsv"))
+
+	if planStarRows != len(plan.Loved.WillStar) {
+		t.Fatalf("plan_star.tsv rows=%d want=%d", planStarRows, len(plan.Loved.WillStar))
+	}
+	if planUnstarRows != len(plan.Unstar.WillUnstar) {
+		t.Fatalf("plan_unstar.tsv rows=%d want=%d", planUnstarRows, len(plan.Unstar.WillUnstar))
+	}
+	if unappliedLovedRows != len(plan.Loved.WontStar) {
+		t.Fatalf("unapplied_loved.tsv rows=%d want=%d", unappliedLovedRows, len(plan.Loved.WontStar))
+	}
+
+	reconcile := readReconcile(t, reconcilePath)
+	if reconcile.ReconcileError != nil {
+		t.Fatalf("unexpected reconcile error: %s", reconcile.ReconcileError.Message)
+	}
+	if reconcile.LovedRecon.AppleLovedLocal != 3 {
+		t.Fatalf("apple loved local=%d want=3", reconcile.LovedRecon.AppleLovedLocal)
 	}
 }
 
-func TestSyncPlanUnstarSet(t *testing.T) {
-	allowlist := extensionAllowlist(parseExtensions(""))
-	libraryPath := filepath.Join("testdata", "library.xml")
+func TestReportSyncPlanLiveWritesArtifacts(t *testing.T) {
+	t.Helper()
 
-	origItunesRoot := *itunesRoot
-	origSubsonicRoot := *subsonicRoot
-	origMatchMode := *matchMode
-	*itunesRoot = "/Music"
-	*subsonicRoot = "/Music"
-	*matchMode = string(matchModeRealpath)
-	defer func() {
-		*itunesRoot = origItunesRoot
-		*subsonicRoot = origSubsonicRoot
-		*matchMode = origMatchMode
-	}()
+	server := newSubsonicTestServer()
+	defer server.Close()
 
-	appleTracks, _, _, stats, err := loadAppleTracks(libraryPath, filterOptions{}, allowlist, false, true)
-	if err != nil {
-		t.Fatalf("failed to load apple tracks: %s", err)
+	client := &subsonic.Client{
+		Client:     server.Client(),
+		BaseUrl:    server.URL,
+		User:       "tester",
+		ClientName: "itunes2subsonic-test",
 	}
-	dumpPath := filepath.Join("testdata", "navidrome_dump.json")
-	entries, err := loadNavidromeDump(dumpPath)
-	if err != nil {
-		t.Fatalf("failed to load navidrome dump: %s", err)
-	}
-	navidromeSongs := buildNavidromeSongsFromDump(entries, *subsonicRoot, matchModeRealpath, allowlist)
-	starred := []navidromeStarredSong{
-		{ID: "nav4", Title: "Track Four", Artist: "Artist C", Album: "Album C", Path: "/Music/Artist C/Album C/04 Track Four.mp3"},
+	if err := client.Authenticate("pass"); err != nil {
+		t.Fatalf("authenticate: %v", err)
 	}
 
-	plan := buildStarUnstarPlanForTest(appleTracks, stats, allowlist, navidromeSongs, starred, matchModeRealpath)
-	if len(plan.Unstar.WillUnstar) != 1 {
-		t.Fatalf("expected 1 unstar candidate, got %d", len(plan.Unstar.WillUnstar))
+	tempDir := t.TempDir()
+	planPath := filepath.Join(tempDir, "sync_plan.json")
+	reconcilePath := filepath.Join(tempDir, "reconcile.json")
+	filters := filterOptions{}
+	allowlist := map[string]struct{}{".mp3": {}}
+
+	resetFlags := setTestFlags(map[*string]string{
+		dumpFile:     "",
+		itunesRoot:   "",
+		subsonicRoot: "",
+		matchMode:    string(matchModeRealpath),
+	})
+	defer resetFlags()
+	resetBoolFlags := setTestBoolFlags(map[*bool]bool{
+		verifySrcFiles: false,
+		copyUnrated:    false,
+		updatePlay:     false,
+	})
+	defer resetBoolFlags()
+
+	if err := runReportSyncPlan(client, filepath.Join("testdata", "itunes_tiny.xml"), planPath, filters, allowlist, matchModeRealpath, false, false); err != nil {
+		t.Fatalf("runReportSyncPlan: %v", err)
 	}
-	if plan.Unstar.WillUnstar[0].Navidrome.SongID != "nav4" {
-		t.Fatalf("expected nav4 unstar, got %q", plan.Unstar.WillUnstar[0].Navidrome.SongID)
+	if err := runReportReconcile(filepath.Join("testdata", "itunes_tiny.xml"), planPath, reconcilePath, filters, false); err != nil {
+		t.Fatalf("runReportReconcile: %v", err)
 	}
-	if plan.Unstar.WillUnstar[0].Reason != reasonStarredNotLoved {
-		t.Fatalf("expected reason %q, got %q", reasonStarredNotLoved, plan.Unstar.WillUnstar[0].Reason)
-	}
+
+	assertFileExists(t, planPath)
+	assertFileExists(t, reconcilePath)
 }
 
-func buildStarUnstarPlanForTest(appleTracks []appleTrackInfo, stats report.LibraryStats, allowlist map[string]struct{}, navidromeSongs []navidromeSong, starredSongs []navidromeStarredSong, selectedMatchMode matchModeValue) report.SyncPlan {
-	plan := report.SyncPlan{
-		Counts: report.SyncPlanCounts{
-			AppleTracks:        stats.Tracks,
-			AppleLoved:         stats.Loved,
-			AppleRated:         stats.Rated,
-			AppleLovedAndRated: stats.LovedAndRated,
-			LovedNotApplied: report.PlanReasonCounts{
-				ByReason: make(map[string]int),
-			},
-			RatedNotApplied: report.PlanReasonCounts{
-				ByReason: make(map[string]int),
-			},
-		},
-		Loved:     report.SyncPlanLoved{},
-		Unstar:    report.SyncPlanUnstar{},
-		Ratings:   report.SyncPlanRatings{},
-		PlayCount: report.SyncPlanPlayCounts{},
-		Playlists: report.SyncPlanPlaylists{},
+func newSubsonicTestServer() *httptest.Server {
+	starred := []string{
+		`<song id="song1" title="Track 1" artist="Artist 1" album="Album 1" path="/Music/Artist1/Album1/Track1.mp3" userRating="0" playCount="0" />`,
+		`<song id="song3" title="Track 3" artist="Artist 2" album="Album 2" path="/Music/Artist2/Album2/Track3.mp3" userRating="0" playCount="0" />`,
+	}
+	searchSongs := []string{
+		`<song id="song1" title="Track 1" artist="Artist 1" album="Album 1" path="/Music/Artist1/Album1/Track1.mp3" userRating="0" playCount="0" />`,
+		`<song id="song2" title="Track 2" artist="Artist 1" album="Album 1" path="/Music/Artist1/Album1/Track2.mp3" userRating="0" playCount="0" />`,
+		`<song id="song3" title="Track 3" artist="Artist 2" album="Album 2" path="/Music/Artist2/Album2/Track3.mp3" userRating="0" playCount="0" />`,
 	}
 
-	navidromeByMatch, _ := buildNavidromeIndex(navidromeSongs)
-	starredByID := make(map[string]navidromeStarredSong)
-	for _, song := range starredSongs {
-		starredByID[song.ID] = song
+	mux := http.NewServeMux()
+	pingHandler := func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, subsonicOKResponse)
 	}
-	appleByMatch := make(map[string]appleTrackInfo)
-	for _, info := range appleTracks {
-		if info.location.parsed == "" {
-			continue
-		}
-		matchKey := normalizeMatchPathWithMode(info.location.parsed, *itunesRoot, selectedMatchMode)
-		if matchKey == "" {
-			continue
-		}
-		if _, exists := appleByMatch[matchKey]; !exists {
-			appleByMatch[matchKey] = info
-		}
-	}
+	mux.HandleFunc("/rest/ping", pingHandler)
+	mux.HandleFunc("/rest/ping.view", pingHandler)
 
-	for _, info := range appleTracks {
-		if !info.loved {
-			continue
-		}
-		reason, matchKey := buildNotAppliedReason(info, allowlist, false)
-		appleReport := buildAppleTrackReport(info, matchKey)
-		entry := report.LovedPlanEntry{
-			Operation: "star",
-			Apple:     appleReport,
-		}
-		if reason != "" {
-			entry.Action = "wont_apply"
-			entry.NotAppliedReason = reason
-			plan.Loved.WontStar = append(plan.Loved.WontStar, entry)
-			plan.Counts.LovedNotApplied.Total++
-			plan.Counts.LovedNotApplied.ByReason[reason]++
-			continue
-		}
-		matches := navidromeByMatch[matchKey]
-		if len(matches) == 0 {
-			reason = reasonNotInNavidromeIndex
-		} else if len(matches) > 1 {
-			reason = reasonAmbiguousMatchMultiple
-		}
-		if reason != "" {
-			entry.Action = "wont_apply"
-			entry.NotAppliedReason = reason
-			plan.Loved.WontStar = append(plan.Loved.WontStar, entry)
-			plan.Counts.LovedNotApplied.Total++
-			plan.Counts.LovedNotApplied.ByReason[reason]++
-			continue
-		}
-		match := matches[0]
-		entry.Navidrome = ptrNavidromeTrack(buildNavidromeTrackReport(match))
-		if _, ok := starredByID[match.ID]; ok {
-			entry.Action = "noop"
-			entry.Reason = reasonAlreadyStarred
-			plan.Loved.Noop = append(plan.Loved.Noop, entry)
-			continue
-		}
-		entry.Action = "star"
-		plan.Loved.WillStar = append(plan.Loved.WillStar, entry)
-		plan.Counts.PlannedStar.Total++
-		if info.trackType == "Remote" {
-			plan.Counts.PlannedStar.Remote++
-		} else {
-			plan.Counts.PlannedStar.Local++
-		}
+	starredHandler := func(w http.ResponseWriter, _ *http.Request) {
+		body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.8.0">
+  <starred2>
+    %s
+  </starred2>
+</subsonic-response>`, strings.Join(starred, "\n    "))
+		_, _ = fmt.Fprint(w, body)
 	}
+	mux.HandleFunc("/rest/getStarred2", starredHandler)
+	mux.HandleFunc("/rest/getStarred2.view", starredHandler)
 
-	for _, song := range starredSongs {
-		matchKey := normalizeMatchPathWithMode(song.Path, *subsonicRoot, selectedMatchMode)
-		var (
-			appleMatch *report.AppleTrack
-			reason     string
-		)
-		if matchKey != "" {
-			if info, ok := appleByMatch[matchKey]; ok {
-				apple := buildAppleTrackReport(info, matchKey)
-				appleMatch = &apple
-				if info.loved {
-					continue
-				}
-				reason = reasonStarredNotLoved
+	searchHandler := func(w http.ResponseWriter, r *http.Request) {
+		offset := 0
+		if value := r.URL.Query().Get("songOffset"); value != "" {
+			if parsed, err := strconv.Atoi(value); err == nil {
+				offset = parsed
 			}
 		}
-		entry := report.UnstarPlanEntry{
-			Operation: "star",
-			Action:    "unstar",
-			Navidrome: report.NavidromeTrack{
-				SongID: song.ID,
-				Path:   song.Path,
-				Title:  song.Title,
-				Artist: song.Artist,
-				Album:  song.Album,
-			},
-			Apple: appleMatch,
+		responseSongs := ""
+		if offset == 0 {
+			responseSongs = strings.Join(searchSongs, "\n    ")
 		}
-		if reason == "" && appleMatch == nil {
-			reason = reasonStarredNoAppleMatch
-		}
-		if reason == "" {
-			continue
-		}
-		entry.Reason = reason
-		if reason == reasonStarredNoAppleMatch {
-			entry.Action = "wont_apply"
-			plan.Unstar.WontUnstar = append(plan.Unstar.WontUnstar, entry)
-			continue
-		}
-		plan.Unstar.WillUnstar = append(plan.Unstar.WillUnstar, entry)
+		body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.8.0">
+  <searchResult3>
+    %s
+  </searchResult3>
+</subsonic-response>`, responseSongs)
+		_, _ = fmt.Fprint(w, body)
 	}
-	plan.Counts.PlannedUnstar = len(plan.Unstar.WillUnstar)
+	mux.HandleFunc("/rest/search3", searchHandler)
+	mux.HandleFunc("/rest/search3.view", searchHandler)
 
+	getSongHandler := func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		var song string
+		switch id {
+		case "song1":
+			song = searchSongs[0]
+		case "song2":
+			song = searchSongs[1]
+		case "song3":
+			song = searchSongs[2]
+		default:
+			song = `<song id="missing" title="Missing" artist="Unknown" album="Unknown" path="/Music/Missing.mp3" userRating="0" playCount="0" />`
+		}
+		body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.8.0">
+  %s
+</subsonic-response>`, song)
+		_, _ = fmt.Fprint(w, body)
+	}
+	mux.HandleFunc("/rest/getSong", getSongHandler)
+	mux.HandleFunc("/rest/getSong.view", getSongHandler)
+
+	playlistsHandler := func(w http.ResponseWriter, _ *http.Request) {
+		body := `<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.8.0">
+  <playlists></playlists>
+</subsonic-response>`
+		_, _ = fmt.Fprint(w, body)
+	}
+	mux.HandleFunc("/rest/getPlaylists", playlistsHandler)
+	mux.HandleFunc("/rest/getPlaylists.view", playlistsHandler)
+	return httptest.NewServer(mux)
+}
+
+func readPlan(t *testing.T, path string) report.SyncPlan {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	var plan report.SyncPlan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		t.Fatalf("unmarshal plan: %v", err)
+	}
 	return plan
+}
+
+func readReconcile(t *testing.T, path string) report.ReconcileReport {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read reconcile: %v", err)
+	}
+	var rec report.ReconcileReport
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("unmarshal reconcile: %v", err)
+	}
+	return rec
+}
+
+func countTSVRows(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read tsv: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 {
+		return 0
+	}
+	return len(lines) - 1
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected file %s: %v", path, err)
+	}
+}
+
+func setTestFlags(values map[*string]string) func() {
+	original := make(map[*string]string, len(values))
+	for key, value := range values {
+		original[key] = *key
+		*key = value
+	}
+	return func() {
+		for key, value := range original {
+			*key = value
+		}
+	}
+}
+
+func setTestBoolFlags(values map[*bool]bool) func() {
+	original := make(map[*bool]bool, len(values))
+	for key, value := range values {
+		original[key] = *key
+		*key = value
+	}
+	return func() {
+		for key, value := range original {
+			*key = value
+		}
+	}
 }

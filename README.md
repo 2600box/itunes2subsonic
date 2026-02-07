@@ -45,6 +45,7 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--out_tsv` (default: empty): Write a TSV summary when reporting library stats.
 * `--report_only` (default: false): Avoid fetching the full Navidrome song list when filters are active (requires `--navidrome_dump`).
 * `--allow_unstar` (default: false): Allow unstar operations when `--dry_run=false`.
+* `--allow_reconcile_mismatch` (default: false): Allow reconcile invariant mismatches (writes report, exits 0).
 * `--created_file` (unused): Placeholder for writing SQL to update created timestamps.
 
 When filters are used, automatic library root detection is skipped; provide `--itunes_root` and
@@ -55,6 +56,27 @@ Path matching normalizes Unicode to NFC to handle macOS (NFD) vs Linux (NFC) fil
 ### Loved/Favorited → Starred
 
 When syncing stars, Apple Music `Favorited` is preferred when present. If `Favorited` is absent, the legacy `Loved` flag is used. The sync output will label this as “Favourited/Loved → Starred.”
+
+### Auditing & reconciliation reports
+
+Use the reporting flags to produce deterministic audit artifacts before running with `--dry_run=false`:
+
+* `--report_sync_plan PATH` writes `sync_plan.json`, including `schema_version`, `generated_at`, Navidrome baseline counts, and the full mutation plan.
+* `--report_reconcile PATH` writes `reconcile.json`, which contains:
+  * Apple Library.xml disaggregation (tracks/loved/rated/loved-only/rated-only split by local/remote).
+  * Navidrome baseline totals (tracks/starred/rated).
+  * Plan counts for stars, unstars, rating sets/unsets, playcount updates, and playlist ops.
+  * Loved→Starred reconciliation fields plus the invariant check (fails the run unless `--allow_reconcile_mismatch=true`).
+* The run directory (same as `--log_file`, or next to the report path) also receives TSVs:
+  * `plan_star.tsv`, `plan_unstar.tsv`, `unapplied_loved.tsv`, and `unapplied_rated.tsv` (if rating mismatches are reconciled).
+
+Each TSV uses the columns:
+
+```
+op    navidrome_id    apple_track_id    artist    album    title    path    reason_code    match_mode    match_confidence
+```
+
+These artifacts are designed to be diffed between runs and to make it explicit which tracks will be starred/unstarred and why.
 
 ### Missing reports
 
