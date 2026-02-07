@@ -56,16 +56,17 @@ type SyncPlanCounts struct {
 }
 
 type AppleTrack struct {
-	TrackID   int    `json:"track_id"`
-	Name      string `json:"name,omitempty"`
-	Artist    string `json:"artist,omitempty"`
-	Album     string `json:"album,omitempty"`
-	TrackType string `json:"track_type,omitempty"`
-	Rating    int    `json:"rating,omitempty"`
-	Loved     bool   `json:"loved"`
-	PathRaw   string `json:"path_raw,omitempty"`
-	PathClean string `json:"path_clean,omitempty"`
-	MatchKey  string `json:"match_key,omitempty"`
+	TrackID      int    `json:"track_id"`
+	Name         string `json:"name,omitempty"`
+	Artist       string `json:"artist,omitempty"`
+	Album        string `json:"album,omitempty"`
+	TrackType    string `json:"track_type,omitempty"`
+	Rating       int    `json:"rating,omitempty"`
+	Loved        bool   `json:"loved"`
+	PathRaw      string `json:"path_raw,omitempty"`
+	PathClean    string `json:"path_clean,omitempty"`
+	PathResolved string `json:"path_resolved,omitempty"`
+	MatchKey     string `json:"match_key,omitempty"`
 }
 
 type NavidromeTrack struct {

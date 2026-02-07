@@ -18,6 +18,7 @@ type verifyThresholds struct {
 	MaxStaleMissingStars      int  `json:"max_stale_missing_on_disk_stars"`
 	MaxStaleMissingRatings    int  `json:"max_stale_missing_on_disk_ratings"`
 	MaxStaleMissingPlaycounts int  `json:"max_stale_missing_on_disk_playcounts"`
+	InvalidLocationFatal      bool `json:"invalid_location_fatal"`
 	PlaylistInvalidFatal      bool `json:"playlist_invalid_location_fatal"`
 }
 
@@ -143,25 +144,54 @@ func buildVerifyReport(summary report.AuditSummary, cfg verifyConfig) verifyRepo
 
 	invalidStars := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainStars, reasonInvalidLocation)
 	if invalidStars > 0 {
-		vr.Go = false
-		addReason(verifyReason{
+		reason := verifyReason{
 			Code:     reasonInvalidLocation,
 			Domain:   string(report.NotAppliedDomainStars),
 			Count:    invalidStars,
 			Message:  "invalid_location entries in stars",
-			Severity: "error",
-		})
+			Severity: "warning",
+		}
+		if cfg.Thresholds.InvalidLocationFatal {
+			reason.Severity = "error"
+			vr.Go = false
+			addReason(reason)
+		} else {
+			addWarning(reason)
+		}
 	}
 	invalidRatings := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainRatings, reasonInvalidLocation)
 	if invalidRatings > 0 {
-		vr.Go = false
-		addReason(verifyReason{
+		reason := verifyReason{
 			Code:     reasonInvalidLocation,
 			Domain:   string(report.NotAppliedDomainRatings),
 			Count:    invalidRatings,
 			Message:  "invalid_location entries in ratings",
-			Severity: "error",
-		})
+			Severity: "warning",
+		}
+		if cfg.Thresholds.InvalidLocationFatal {
+			reason.Severity = "error"
+			vr.Go = false
+			addReason(reason)
+		} else {
+			addWarning(reason)
+		}
+	}
+	invalidPlaycounts := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainPlaycounts, reasonInvalidLocation)
+	if invalidPlaycounts > 0 {
+		reason := verifyReason{
+			Code:     reasonInvalidLocation,
+			Domain:   string(report.NotAppliedDomainPlaycounts),
+			Count:    invalidPlaycounts,
+			Message:  "invalid_location entries in playcounts",
+			Severity: "warning",
+		}
+		if cfg.Thresholds.InvalidLocationFatal {
+			reason.Severity = "error"
+			vr.Go = false
+			addReason(reason)
+		} else {
+			addWarning(reason)
+		}
 	}
 
 	staleStars := countNotApplied(summary.NotAppliedSummary, report.NotAppliedDomainStars, reasonStaleMissingOnDisk)
