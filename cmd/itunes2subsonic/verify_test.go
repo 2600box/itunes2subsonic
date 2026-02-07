@@ -39,18 +39,28 @@ func TestVerifyPlannedUnstarRequiresAllow(t *testing.T) {
 	}
 }
 
-func TestVerifyInvalidLocationIsFatalForStarsAndRatings(t *testing.T) {
+func TestVerifyInvalidLocationWarningByDefault(t *testing.T) {
 	summary := baseVerifySummary()
-	summary.NotAppliedSummary.ByDomain[report.NotAppliedDomainStars] = report.NotAppliedDomainSummary{
-		Total:    1,
-		ByReason: map[string]int{reasonInvalidLocation: 1},
+	summary.NotAppliedSummary.ByDomain[report.NotAppliedDomainRatings] = report.NotAppliedDomainSummary{
+		Total:    2,
+		ByReason: map[string]int{reasonInvalidLocation: 2},
 	}
 
 	verifyReport := buildVerifyReport(summary, verifyConfig{
 		Thresholds: verifyThresholds{},
 	})
+	if !verifyReport.Go {
+		t.Fatalf("expected GO for invalid_location by default")
+	}
+	if len(verifyReport.Warnings) == 0 {
+		t.Fatalf("expected warning for invalid_location by default")
+	}
+
+	verifyReport = buildVerifyReport(summary, verifyConfig{
+		Thresholds: verifyThresholds{InvalidLocationFatal: true},
+	})
 	if verifyReport.Go {
-		t.Fatalf("expected NO-GO for invalid_location in stars")
+		t.Fatalf("expected NO-GO for invalid_location when fatal is enabled")
 	}
 }
 

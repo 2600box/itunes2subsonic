@@ -23,6 +23,7 @@ const (
 	reasonExcludedExtension      = "excluded_extension"
 	reasonInvalidLocation        = "invalid_location"
 	reasonStaleMissingOnDisk     = "stale_missing_on_disk"
+	reasonPathMismatchOnDisk     = "path_mismatch_on_disk"
 	reasonAmbiguousMatchMultiple = "ambiguous_match_multiple_dst"
 	reasonFilteredOut            = "filtered_out"
 	reasonAlreadyStarred         = "already_starred"
@@ -99,18 +100,19 @@ func isLovedTrack(track itunes.Track) bool {
 	return false
 }
 
-func buildAppleTrackReport(info appleTrackInfo, matchKey string) report.AppleTrack {
+func buildAppleTrackReport(info appleTrackInfo, matchKey string, resolvedPath string) report.AppleTrack {
 	return report.AppleTrack{
-		TrackID:   info.track.TrackId,
-		Name:      info.track.Name,
-		Artist:    info.track.Artist,
-		Album:     info.track.Album,
-		TrackType: info.trackType,
-		Rating:    info.track.Rating,
-		Loved:     info.loved,
-		PathRaw:   info.location.raw,
-		PathClean: info.location.parsed,
-		MatchKey:  matchKey,
+		TrackID:      info.track.TrackId,
+		Name:         info.track.Name,
+		Artist:       info.track.Artist,
+		Album:        info.track.Album,
+		TrackType:    info.trackType,
+		Rating:       info.track.Rating,
+		Loved:        info.loved,
+		PathRaw:      info.location.raw,
+		PathClean:    info.location.parsed,
+		PathResolved: resolvedPath,
+		MatchKey:     matchKey,
 	}
 }
 
@@ -486,32 +488,87 @@ func ensureNavidromeMetadata(c *subsonic.Client, song navidromeSong) (navidromeS
 	return song, nil
 }
 
-func buildNotAppliedReason(info appleTrackInfo, allowlist map[string]struct{}, verifySrcFiles bool) (string, string) {
+func buildNotAppliedReason(info appleTrackInfo, allowlist map[string]struct{}, verifySrcFiles bool, resolveOnDisk bool) (string, string, string) {
 	if info.filteredOut {
-		return reasonFilteredOut, ""
+		return reasonFilteredOut, "", ""
 	}
 	if isRemoteTrack(info.track) && (!info.location.ok || isInvalidParsedPath(info.location.parsed)) {
-		return reasonRemoteNoLocalMapping, ""
+		return reasonRemoteNoLocalMapping, "", ""
 	}
 	if !info.location.ok || isInvalidParsedPath(info.location.parsed) {
-		return reasonInvalidLocation, ""
+		return reasonInvalidLocation, "", ""
 	}
 	if _, allowed := isExtensionAllowed(info.location.parsed, allowlist); !allowed {
-		return reasonExcludedExtension, ""
+		return reasonExcludedExtension, "", ""
 	}
 	if verifySrcFiles {
 		if _, err := os.Stat(info.location.parsed); err != nil {
-			return reasonStaleMissingOnDisk, ""
+			if resolveOnDisk {
+				if resolved, ok := resolvePathOnDisk(info.location.parsed); ok {
+					return reasonPathMismatchOnDisk, "", resolved
+				}
+			}
+			return reasonStaleMissingOnDisk, "", ""
 		}
 	}
 	matchKey := normalizeMatchPathWithMode(info.location.parsed, *itunesRoot, matchModeValue(*matchMode))
 	if matchKey == "" {
 		if isRemoteTrack(info.track) {
-			return reasonRemoteNoLocalMapping, ""
+			return reasonRemoteNoLocalMapping, "", ""
 		}
-		return reasonInvalidLocation, ""
+		return reasonInvalidLocation, "", ""
 	}
-	return "", matchKey
+	return "", matchKey, ""
+}
+
+func buildUnstarPlan(starredSongs []navidromeStarredSong, appleByMatch map[string]appleTrackInfo, selectedMatchMode matchModeValue, syncUnstar bool) report.SyncPlanUnstar {
+	plan := report.SyncPlanUnstar{}
+	if !syncUnstar {
+		return plan
+	}
+	for _, song := range starredSongs {
+		matchKey := normalizeMatchPathWithMode(song.Path, *subsonicRoot, selectedMatchMode)
+		var (
+			appleMatch *report.AppleTrack
+			reason     string
+		)
+		if matchKey != "" {
+			if info, ok := appleByMatch[matchKey]; ok {
+				apple := buildAppleTrackReport(info, matchKey, "")
+				appleMatch = &apple
+				if info.loved {
+					continue
+				}
+				reason = reasonStarredNotLoved
+			}
+		}
+		entry := report.UnstarPlanEntry{
+			Operation: "star",
+			Action:    "unstar",
+			Navidrome: report.NavidromeTrack{
+				SongID: song.ID,
+				Path:   song.Path,
+				Title:  song.Title,
+				Artist: song.Artist,
+				Album:  song.Album,
+			},
+			Apple: appleMatch,
+		}
+		if reason == "" && appleMatch == nil {
+			reason = reasonStarredNoAppleMatch
+		}
+		if reason == "" {
+			continue
+		}
+		entry.Reason = reason
+		if reason == reasonStarredNoAppleMatch {
+			entry.Action = "wont_apply"
+			plan.WontUnstar = append(plan.WontUnstar, entry)
+			continue
+		}
+		plan.WillUnstar = append(plan.WillUnstar, entry)
+	}
+	return plan
 }
 
 func runReportLibraryStats(itunesXML string, filters filterOptions, outJSON string, outTSV string) error {
@@ -644,8 +701,8 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		if !info.loved {
 			continue
 		}
-		reason, matchKey := buildNotAppliedReason(info, allowlist, *verifySrcFiles)
-		appleReport := buildAppleTrackReport(info, matchKey)
+		reason, matchKey, resolvedPath := buildNotAppliedReason(info, allowlist, *verifySrcFiles, *pathResolveOnDisk)
+		appleReport := buildAppleTrackReport(info, matchKey, resolvedPath)
 		entry := report.LovedPlanEntry{
 			Operation: "star",
 			Apple:     appleReport,
@@ -699,8 +756,8 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		if !info.rated && !*copyUnrated {
 			continue
 		}
-		reason, matchKey := buildNotAppliedReason(info, allowlist, *verifySrcFiles)
-		appleReport := buildAppleTrackReport(info, matchKey)
+		reason, matchKey, resolvedPath := buildNotAppliedReason(info, allowlist, *verifySrcFiles, *pathResolveOnDisk)
+		appleReport := buildAppleTrackReport(info, matchKey, resolvedPath)
 		entry := report.RatingPlanEntry{
 			Operation:     "rate",
 			Apple:         appleReport,
@@ -778,8 +835,8 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		if !hasPlayData {
 			continue
 		}
-		reason, matchKey := buildNotAppliedReason(info, allowlist, *verifySrcFiles)
-		appleReport := buildAppleTrackReport(info, matchKey)
+		reason, matchKey, resolvedPath := buildNotAppliedReason(info, allowlist, *verifySrcFiles, *pathResolveOnDisk)
+		appleReport := buildAppleTrackReport(info, matchKey, resolvedPath)
 		entry := report.PlayCountPlanEntry{
 			Operation:       "playcount",
 			Apple:           appleReport,
@@ -853,48 +910,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		plan.Counts.PlannedPlaycountUpdates++
 	}
 
-	for _, song := range starredSongs {
-		matchKey := normalizeMatchPathWithMode(song.Path, *subsonicRoot, selectedMatchMode)
-		var (
-			appleMatch *report.AppleTrack
-			reason     string
-		)
-		if matchKey != "" {
-			if info, ok := appleByMatch[matchKey]; ok {
-				apple := buildAppleTrackReport(info, matchKey)
-				appleMatch = &apple
-				if info.loved {
-					continue
-				}
-				reason = reasonStarredNotLoved
-			}
-		}
-		entry := report.UnstarPlanEntry{
-			Operation: "star",
-			Action:    "unstar",
-			Navidrome: report.NavidromeTrack{
-				SongID: song.ID,
-				Path:   song.Path,
-				Title:  song.Title,
-				Artist: song.Artist,
-				Album:  song.Album,
-			},
-			Apple: appleMatch,
-		}
-		if reason == "" && appleMatch == nil {
-			reason = reasonStarredNoAppleMatch
-		}
-		if reason == "" {
-			continue
-		}
-		entry.Reason = reason
-		if reason == reasonStarredNoAppleMatch {
-			entry.Action = "wont_apply"
-			plan.Unstar.WontUnstar = append(plan.Unstar.WontUnstar, entry)
-			continue
-		}
-		plan.Unstar.WillUnstar = append(plan.Unstar.WillUnstar, entry)
-	}
+	plan.Unstar = buildUnstarPlan(starredSongs, appleByMatch, selectedMatchMode, *syncUnstar)
 	plan.Counts.PlannedUnstar = len(plan.Unstar.WillUnstar)
 
 	existingPlaylists, err := c.GetPlaylists(nil)
@@ -1467,7 +1483,7 @@ func buildPlaylistPlanEntry(playlist playlistRef, ctx playlistPlanContext, allow
 			})
 			continue
 		}
-		reason, matchKey := buildNotAppliedReason(info, allowlist, verifySrcFiles)
+		reason, matchKey, _ := buildNotAppliedReason(info, allowlist, verifySrcFiles, *pathResolveOnDisk)
 		if reason != "" {
 			missing = append(missing, playlistMissingRef(info, reason))
 			continue

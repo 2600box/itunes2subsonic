@@ -75,6 +75,7 @@ var (
 	probeSongID             = flag.String("probe_song_id", "", "if set, fetch /rest/getSong for the given ID and validate its path")
 	probePath               = flag.String("probe_path", "", "if set, normalise the path and check for matches in the Navidrome dump/index")
 	allowUnstar             = flag.Bool("allow_unstar", false, "allow unstar operations when --dry_run=false")
+	syncUnstar              = flag.Bool("sync_unstar", false, "allow planning unstar operations (default: off)")
 	allowReconcileMismatch  = flag.Bool("allow_reconcile_mismatch", false, "allow reconcile invariant mismatches (writes report, exits 0)")
 	configFile              = flag.String("config", "", "path to a YAML config file containing presets")
 	presetName              = flag.String("preset", "", "preset name to load from --config")
@@ -92,7 +93,9 @@ var (
 	maxStaleMissingStars    = flag.Int("max_stale_missing_on_disk_stars", 0, "max stale_missing_on_disk allowed for stars before NO-GO")
 	maxStaleMissingRatings  = flag.Int("max_stale_missing_on_disk_ratings", 0, "max stale_missing_on_disk allowed for ratings before NO-GO")
 	maxStaleMissingPlays    = flag.Int("max_stale_missing_on_disk_playcounts", 0, "max stale_missing_on_disk allowed for playcounts before NO-GO")
+	invalidLocationFatal    = flag.Bool("invalid_location_fatal", false, "treat invalid_location for stars/ratings/playcounts as a NO-GO condition")
 	playlistInvalidFatal    = flag.Bool("playlist_invalid_location_fatal", false, "treat playlist invalid_location as a NO-GO condition")
+	pathResolveOnDisk       = flag.Bool("path_resolve_on_disk", true, "attempt case/unicode path resolution when verifying source files")
 	explainNotApplied       = flag.Bool("explain_not_applied", false, "print example rows for not-applied reasons from a run directory")
 	explainNotAppliedTopN   = flag.Int("explain_not_applied_topn", 3, "number of examples to print per not-applied reason")
 )
@@ -176,6 +179,7 @@ type missingStats struct {
 	SrcInvalidLocationCount   int `json:"src_invalid_location_count"`
 	SrcExcludedExtensionCount int `json:"src_excluded_extension_count"`
 	SrcStaleMissingCount      int `json:"src_stale_missing_count"`
+	SrcPathMismatchCount      int `json:"src_path_mismatch_count"`
 	DstTotal                  int `json:"dst_total"`
 	DstEligible               int `json:"dst_eligible"`
 }
@@ -187,15 +191,16 @@ type missingCounts struct {
 }
 
 type missingSong struct {
-	ID          string `json:"id,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Artist      string `json:"artist,omitempty"`
-	Album       string `json:"album,omitempty"`
-	RawPath     string `json:"raw_path,omitempty"`
-	DecodedPath string `json:"decoded_path,omitempty"`
-	CleanPath   string `json:"clean_path,omitempty"`
-	Extension   string `json:"extension,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Path         string `json:"path,omitempty"`
+	ResolvedPath string `json:"resolved_path,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Artist       string `json:"artist,omitempty"`
+	Album        string `json:"album,omitempty"`
+	RawPath      string `json:"raw_path,omitempty"`
+	DecodedPath  string `json:"decoded_path,omitempty"`
+	CleanPath    string `json:"clean_path,omitempty"`
+	Extension    string `json:"extension,omitempty"`
 }
 
 type missingEntry struct {
@@ -221,6 +226,7 @@ type missingReport struct {
 	SrcInvalidLocationSamples  []missingSong  `json:"src_invalid_location_samples"`
 	ExcludedExtensionSamples   []missingSong  `json:"excluded_extension_samples"`
 	StaleSrcFileSamples        []missingSong  `json:"stale_src_file_samples"`
+	SrcPathMismatchSamples     []missingSong  `json:"src_path_mismatch_samples"`
 	NotInNavidromeIndexSamples []missingEntry `json:"not_in_navidrome_index_samples"`
 	NotInNavidromeIndexByExt   map[string]int `json:"not_in_navidrome_index_by_ext"`
 	NotInNavidromeIndexByDir   map[string]int `json:"not_in_navidrome_index_by_dir_prefix"`
@@ -1763,10 +1769,12 @@ func main() {
 	srcInvalidLocationCount := 0
 	srcExcludedExtensionCount := 0
 	srcStaleMissingCount := 0
+	srcPathMismatchCount := 0
 	var invalidSrcSamples []missingSong
 	var remoteSrcSamples []missingSong
 	var excludedExtensionSamples []missingSong
 	var staleSrcSamples []missingSong
+	var pathMismatchSamples []missingSong
 	missingEntries := make([]missingEntry, 0)
 	notInNavidromeSamples := make([]missingEntry, 0)
 	notInNavidromeByExt := make(map[string]int)
@@ -1829,6 +1837,17 @@ func main() {
 
 			if *verifySrcFiles {
 				if _, err := os.Stat(location.parsed); err != nil {
+					if *pathResolveOnDisk {
+						if resolved, ok := resolvePathOnDisk(location.parsed); ok {
+							srcPathMismatchCount++
+							sample := buildMissingSongFromTrack(v, location, true)
+							if sample != nil {
+								sample.ResolvedPath = resolved
+								appendSample(&pathMismatchSamples, sample)
+							}
+							continue
+						}
+					}
 					srcStaleMissingCount++
 					appendSample(&staleSrcSamples, buildMissingSongFromTrack(v, location, true))
 					continue
@@ -1943,6 +1962,7 @@ func main() {
 					MaxStaleMissingStars:      *maxStaleMissingStars,
 					MaxStaleMissingRatings:    *maxStaleMissingRatings,
 					MaxStaleMissingPlaycounts: *maxStaleMissingPlays,
+					InvalidLocationFatal:      *invalidLocationFatal,
 					PlaylistInvalidFatal:      *playlistInvalidFatal,
 				},
 			}
@@ -2116,8 +2136,8 @@ func main() {
 		dstEligible = append(dstEligible, song)
 	}
 
-	log.Printf("Src: total %d, eligible %d, remote %d, invalid_location %d, excluded_ext %d, stale_missing %d",
-		srcTotal, len(srcSongs), srcRemoteCount, srcInvalidLocationCount, srcExcludedExtensionCount, srcStaleMissingCount)
+	log.Printf("Src: total %d, eligible %d, remote %d, invalid_location %d, excluded_ext %d, stale_missing %d, path_mismatch %d",
+		srcTotal, len(srcSongs), srcRemoteCount, srcInvalidLocationCount, srcExcludedExtensionCount, srcStaleMissingCount, srcPathMismatchCount)
 	log.Printf("Dst: total %d, eligible %d", len(dstSongs), len(dstEligible))
 
 	if *itunesRoot == "" && *subsonicRoot == "" && !filterActive {
@@ -2343,6 +2363,9 @@ func main() {
 		if staleSrcSamples == nil {
 			staleSrcSamples = []missingSong{}
 		}
+		if pathMismatchSamples == nil {
+			pathMismatchSamples = []missingSong{}
+		}
 		if notInNavidromeSamples == nil {
 			notInNavidromeSamples = []missingEntry{}
 		}
@@ -2368,6 +2391,7 @@ func main() {
 				SrcInvalidLocationCount:   srcInvalidLocationCount,
 				SrcExcludedExtensionCount: srcExcludedExtensionCount,
 				SrcStaleMissingCount:      srcStaleMissingCount,
+				SrcPathMismatchCount:      srcPathMismatchCount,
 				DstTotal:                  len(dstSongs),
 				DstEligible:               len(dstEligible),
 			},
@@ -2381,6 +2405,7 @@ func main() {
 			SrcInvalidLocationSamples:  invalidSrcSamples,
 			ExcludedExtensionSamples:   excludedExtensionSamples,
 			StaleSrcFileSamples:        staleSrcSamples,
+			SrcPathMismatchSamples:     pathMismatchSamples,
 			NotInNavidromeIndexSamples: notInNavidromeSamples,
 			NotInNavidromeIndexByExt:   notInNavidromeByExt,
 			NotInNavidromeIndexByDir:   notInNavidromeByDir,
@@ -2507,12 +2532,16 @@ func main() {
 	if *syncStarred {
 		fmt.Fprintln(stdoutWriter, "== Favourited/Loved → Starred ==")
 		toStar, _ := buildStarUpdates(byPath)
-		unstarCandidates := buildUnstarCandidates(byPath)
+		var unstarCandidates []unstarCandidate
+		var toUnstar []string
 		unstarPath := filepath.Join(runDirFromLogFile(), "plan_unstar.tsv")
-		if err := writeUnstarAuditTSV(unstarPath, unstarCandidates, selectedMatchMode); err != nil {
-			log.Printf("Warning: failed to write %s: %s", unstarPath, err)
+		if *syncUnstar {
+			unstarCandidates = buildUnstarCandidates(byPath)
+			if err := writeUnstarAuditTSV(unstarPath, unstarCandidates, selectedMatchMode); err != nil {
+				log.Printf("Warning: failed to write %s: %s", unstarPath, err)
+			}
+			toUnstar = unstarIDs(unstarCandidates)
 		}
-		toUnstar := unstarIDs(unstarCandidates)
 		fmt.Fprintf(stdoutWriter, "== Sync %d Star / %d Unstar ==\n", len(toStar), len(toUnstar))
 		if len(toUnstar) > 0 {
 			fmt.Fprintf(stdoutWriter, "== Unstar Candidates (%d) ==\n", len(toUnstar))
