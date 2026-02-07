@@ -24,3 +24,23 @@ func TestBuildUnstarPlanRespectsSyncUnstar(t *testing.T) {
 		t.Fatalf("expected no planned unstar entries when sync_unstar is false")
 	}
 }
+
+func TestRunReportReconcileSkipsWhenPathEmpty(t *testing.T) {
+	err := runReportReconcile("missing.xml", "missing.json", "", filterOptions{}, false)
+	if err != nil {
+		t.Fatalf("expected no error when reconcile path is empty, got %s", err)
+	}
+}
+
+func TestRunReportSyncPlanSkipsWhenPathEmpty(t *testing.T) {
+	plan, stats, navidromeSongs, appleTracks, err := runReportSyncPlanWithData(nil, "missing.xml", "", filterOptions{}, nil, matchModeRealpath, false, false, "")
+	if err != nil {
+		t.Fatalf("expected no error when sync plan path is empty, got %s", err)
+	}
+	if navidromeSongs != nil || appleTracks != nil {
+		t.Fatalf("expected no data when sync plan is skipped")
+	}
+	if plan.SchemaVersion != 0 || stats.Tracks.Total != 0 {
+		t.Fatalf("expected empty plan and stats when sync plan is skipped")
+	}
+}

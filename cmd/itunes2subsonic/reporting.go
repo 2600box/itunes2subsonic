@@ -131,6 +131,7 @@ func buildLibraryStats(itunesXML string, filters filterOptions, applyFilters boo
 	if itunesXML == "" {
 		return report.LibraryStats{}, fmt.Errorf("--itunes_xml is required")
 	}
+	logPhase("itunes_library_parse")
 	file, err := os.Open(itunesXML)
 	if err != nil {
 		return report.LibraryStats{}, err
@@ -230,6 +231,7 @@ func loadAppleTracks(itunesXML string, filters filterOptions, allowlist map[stri
 	if itunesXML == "" {
 		return nil, nil, nil, report.LibraryStats{}, fmt.Errorf("--itunes_xml is required")
 	}
+	logPhase("itunes_library_parse")
 	file, err := os.Open(itunesXML)
 	if err != nil {
 		return nil, nil, nil, report.LibraryStats{}, err
@@ -612,6 +614,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		return emptySyncPlanResult(err)
 	}
 
+	logPhase("navidrome_fetch")
 	starredSongs, err := fetchStarredSongs(c)
 	if err != nil {
 		return emptySyncPlanResult(err)
@@ -630,6 +633,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		}
 		navidromeSongs = buildNavidromeSongsFromDump(entries, *subsonicRoot, selectedMatchMode, allowlist)
 	} else {
+		logPhase("navidrome_fetch")
 		fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching navidrome data"))
 		songs, err := fetchSubsonicSongs(c, fetchBar)
 		if err != nil {
@@ -650,6 +654,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		navidromeSongs = buildNavidromeSongsFromSearch(dstSongs, *subsonicRoot, selectedMatchMode, allowlist)
 	}
 
+	logPhase("build_indices")
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	plan := report.SyncPlan{
 		SchemaVersion: 2,
@@ -697,6 +702,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 		}
 	}
 
+	logPhase("compute_plan")
 	for _, info := range appleTracks {
 		if !info.loved {
 			continue
@@ -913,39 +919,41 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 	plan.Unstar = buildUnstarPlan(starredSongs, appleByMatch, selectedMatchMode, *syncUnstar)
 	plan.Counts.PlannedUnstar = len(plan.Unstar.WillUnstar)
 
-	existingPlaylists, err := c.GetPlaylists(nil)
-	if err != nil {
-		return emptySyncPlanResult(err)
-	}
-	playlistsByName := make(map[string]*subsonic.Playlist)
-	for _, playlist := range existingPlaylists {
-		playlistsByName[playlist.Name] = playlist
-	}
-
-	for _, playlist := range playlistRefs {
-		if playlist.Master || playlist.Name == "" {
-			continue
-		}
-		entry, err := buildPlaylistPlanEntry(playlist, playlistPlanContext{
-			navidromeByID: navidromeByID,
-			appleByID:     appleByID,
-			appleByMatch:  appleByMatch,
-			navByMatch:    navidromeByMatch,
-		}, allowlist, *verifySrcFiles, c, playlistsByName)
+	if *syncPlaylist {
+		existingPlaylists, err := c.GetPlaylists(nil)
 		if err != nil {
 			return emptySyncPlanResult(err)
 		}
-		plan.Playlists.Entries = append(plan.Playlists.Entries, entry)
-		switch entry.Action {
-		case "create":
-			plan.Counts.PlannedPlaylistCreates++
-		case "update":
-			plan.Counts.PlannedPlaylistUpdates++
-		case "noop":
-			plan.Counts.PlannedPlaylistNoop++
+		playlistsByName := make(map[string]*subsonic.Playlist)
+		for _, playlist := range existingPlaylists {
+			playlistsByName[playlist.Name] = playlist
 		}
-		plan.Counts.PlannedPlaylistTrackAdds += len(entry.AddTracks)
-		plan.Counts.PlannedPlaylistRemoves += len(entry.RemoveTracks)
+
+		for _, playlist := range playlistRefs {
+			if playlist.Master || playlist.Name == "" {
+				continue
+			}
+			entry, err := buildPlaylistPlanEntry(playlist, playlistPlanContext{
+				navidromeByID: navidromeByID,
+				appleByID:     appleByID,
+				appleByMatch:  appleByMatch,
+				navByMatch:    navidromeByMatch,
+			}, allowlist, *verifySrcFiles, c, playlistsByName)
+			if err != nil {
+				return emptySyncPlanResult(err)
+			}
+			plan.Playlists.Entries = append(plan.Playlists.Entries, entry)
+			switch entry.Action {
+			case "create":
+				plan.Counts.PlannedPlaylistCreates++
+			case "update":
+				plan.Counts.PlannedPlaylistUpdates++
+			case "noop":
+				plan.Counts.PlannedPlaylistNoop++
+			}
+			plan.Counts.PlannedPlaylistTrackAdds += len(entry.AddTracks)
+			plan.Counts.PlannedPlaylistRemoves += len(entry.RemoveTracks)
+		}
 	}
 
 	sortLovedPlanEntries(plan.Loved.WillStar)
@@ -966,8 +974,8 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 }
 
 func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool) error {
-	if planPath == "" {
-		return fmt.Errorf("--report_sync_plan requires a path")
+	if strings.TrimSpace(planPath) == "" {
+		return nil
 	}
 	plan, stats, _, _, _, _, err := buildSyncPlan(c, itunesXML, filters, allowlist, selectedMatchMode, filterActive, reportOnly)
 	if err != nil {
@@ -983,8 +991,8 @@ func emptySyncPlanWithDataResult(err error) (report.SyncPlan, report.LibraryStat
 }
 
 func runReportSyncPlanWithData(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, planTSVBase string) (report.SyncPlan, report.LibraryStats, []navidromeSong, []appleTrackInfo, error) {
-	if planPath == "" {
-		return emptySyncPlanWithDataResult(fmt.Errorf("--report_sync_plan requires a path"))
+	if strings.TrimSpace(planPath) == "" {
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil
 	}
 	plan, stats, navidromeSongs, _, _, appleTracks, err := buildSyncPlan(c, itunesXML, filters, allowlist, selectedMatchMode, filterActive, reportOnly)
 	if err != nil {
@@ -1050,11 +1058,11 @@ func writeSyncPlanArtifacts(planPath string, plan report.SyncPlan, selectedMatch
 }
 
 func runReportReconcile(itunesXML string, planPath string, reconcilePath string, filters filterOptions, allowMismatch bool) error {
+	if strings.TrimSpace(reconcilePath) == "" {
+		return nil
+	}
 	if planPath == "" {
 		return fmt.Errorf("--report_reconcile requires --report_sync_plan to supply plan counts")
-	}
-	if reconcilePath == "" {
-		return fmt.Errorf("--report_reconcile requires a path")
 	}
 	stats, err := buildLibraryStats(itunesXML, filters, true)
 	if err != nil {

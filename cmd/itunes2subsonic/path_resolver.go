@@ -38,6 +38,7 @@ func resolvePathOnDisk(pathValue string) (string, bool) {
 		if segment == "" {
 			continue
 		}
+		segmentMatcher := newSegmentMatcher(segment)
 		entries, err := os.ReadDir(current)
 		if err != nil {
 			return "", false
@@ -46,7 +47,7 @@ func resolvePathOnDisk(pathValue string) (string, bool) {
 		matches := 0
 		for _, entry := range entries {
 			name := entry.Name()
-			if segmentMatches(segment, name) {
+			if segmentMatcher.matches(name) {
 				matches++
 				match = name
 				if matches > 1 {
@@ -65,18 +66,31 @@ func resolvePathOnDisk(pathValue string) (string, bool) {
 	return current, true
 }
 
-func segmentMatches(a, b string) bool {
-	if a == b {
+type segmentMatcher struct {
+	raw string
+	nfc string
+	nfd string
+}
+
+func newSegmentMatcher(segment string) segmentMatcher {
+	return segmentMatcher{
+		raw: segment,
+		nfc: norm.NFC.String(segment),
+		nfd: norm.NFD.String(segment),
+	}
+}
+
+func (m segmentMatcher) matches(candidate string) bool {
+	if m.raw == candidate {
 		return true
 	}
-	if strings.EqualFold(a, b) {
+	if strings.EqualFold(m.raw, candidate) {
 		return true
 	}
-	if strings.EqualFold(norm.NFC.String(a), norm.NFC.String(b)) {
+	candidateNFC := norm.NFC.String(candidate)
+	if strings.EqualFold(m.nfc, candidateNFC) {
 		return true
 	}
-	if strings.EqualFold(norm.NFD.String(a), norm.NFD.String(b)) {
-		return true
-	}
-	return false
+	candidateNFD := norm.NFD.String(candidate)
+	return strings.EqualFold(m.nfd, candidateNFD)
 }
