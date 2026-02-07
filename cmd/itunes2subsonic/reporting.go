@@ -595,7 +595,7 @@ func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, 
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	plan := report.SyncPlan{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		GeneratedAt:   generatedAt,
 		NavidromeSummary: report.NavidromeSummary{
 			TracksTotal:  len(navidromeSongs),
@@ -1551,6 +1551,7 @@ func playlistTrackRef(info appleTrackInfo, match navidromeSong) report.PlaylistT
 		Artist:          firstNonEmpty(match.Artist, info.track.Artist),
 		Album:           firstNonEmpty(match.Album, info.track.Album),
 		Path:            firstNonEmpty(match.Path, info.location.parsed),
+		PathRaw:         info.location.raw,
 	}
 }
 
@@ -1561,6 +1562,7 @@ func playlistMissingRef(info appleTrackInfo, reason string) report.PlaylistTrack
 		Artist:       info.track.Artist,
 		Album:        info.track.Album,
 		Path:         info.location.parsed,
+		PathRaw:      info.location.raw,
 		Reason:       reason,
 	}
 }

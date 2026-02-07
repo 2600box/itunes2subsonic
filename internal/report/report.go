@@ -142,6 +142,7 @@ type PlaylistTrackRef struct {
 	Artist          string `json:"artist,omitempty"`
 	Album           string `json:"album,omitempty"`
 	Path            string `json:"path,omitempty"`
+	PathRaw         string `json:"path_raw,omitempty"`
 	Reason          string `json:"reason,omitempty"`
 }
 

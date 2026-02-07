@@ -1,0 +1,19 @@
+version: 1
+presets:
+  audit:
+    # Credentials should be provided via SUBSONIC_USER / SUBSONIC_PASS environment variables.
+    itunes_xml: "Library.xml"
+    music_root: "/Volumes/fennec/Music/Media/Music"
+    subsonic_url: "http://10.0.0.114:4533"
+    subsonic_client: "itunes2subsonic"
+    match_mode: "realpath"
+    require_real_path: true
+    dry_run: true
+    debug: false
+    run_dir: "run/latest"
+    navidrome_dump: "run/latest/navidrome_dump.json"
+    report_sync_plan: "run/latest/sync_plan.json"
+    report_sync_plan_tsv: "run/latest/sync_plan"
+    report_reconcile: "run/latest/reconcile.json"
+    report_remote_match_json: "run/latest/remote_match.json"
+    report_remote_match_tsv: "run/latest/remote_match.tsv"

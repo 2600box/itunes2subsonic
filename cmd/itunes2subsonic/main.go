@@ -719,6 +719,19 @@ func buildVersion() string {
 	return info.Main.Version
 }
 
+func buildGitCommit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
 func decodeHexByte(a, b byte) (byte, bool) {
 	hi, ok := hexValue(a)
 	if !ok {
@@ -1580,30 +1593,38 @@ func main() {
 		return
 	}
 	setFlags := collectSetFlags()
+	cfg := loadConfig()
 	var presetConfig preset
 	if *presetName != "" || *dumpPreset {
 		if *configFile == "" {
 			log.Fatalf("--preset/--dump_preset requires --config to be set")
 		}
-		cfg, err := loadPresetFile(*configFile)
+		presetFileCfg, err := loadPresetFile(*configFile)
 		if err != nil {
 			log.Fatalf("Failed to load config %q: %s", *configFile, err)
 		}
 		if *presetName == "" {
 			log.Fatalf("--dump_preset requires --preset to be set")
 		}
-		value, err := resolvePreset(*presetName, cfg)
+		value, err := resolvePreset(*presetName, presetFileCfg)
 		if err != nil {
 			log.Fatalf("Failed to resolve preset %q: %s", *presetName, err)
 		}
 		presetConfig = value
 		applyPreset(presetConfig, setFlags)
 		if *dumpPreset {
-			resolved := buildResolvedPreset(*presetName, presetConfig)
+			resolved := buildResolvedPreset(*presetName, presetConfig, setFlags, cfg)
 			if err := writeResolvedPreset(resolved); err != nil {
 				log.Fatalf("Failed to write resolved preset: %s", err)
 			}
 			return
+		}
+	}
+	if *presetName != "" {
+		if err := checkPresetPlaceholders(presetConfig, setFlags, cfg); err != nil {
+			resolved := buildResolvedPreset(*presetName, presetConfig, setFlags, cfg)
+			_ = writeResolvedPreset(resolved)
+			log.Fatalf("Preset %q looks like it contains placeholder values: %s\nUpdate configs or override with CLI flags (see resolved preset above).", *presetName, err)
 		}
 	}
 	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
@@ -1635,11 +1656,27 @@ func main() {
 		}
 		return
 	}
-	cfg := loadConfig()
 	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), presetConfig.SubsonicUser, cfg.SubsonicUser)
 	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), presetConfig.SubsonicPass, cfg.SubsonicPass)
 	if *subsonicUrl == "" {
 		*subsonicUrl = cfg.SubsonicURL
+	}
+
+	requiresNonInteractive := *auditFlag || *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != ""
+	if requiresNonInteractive {
+		missing := make([]string, 0)
+		if *subsonicUrl == "" {
+			missing = append(missing, "--subsonic")
+		}
+		if subsonicUser == "" {
+			missing = append(missing, "SUBSONIC_USER")
+		}
+		if subsonicPass == "" {
+			missing = append(missing, "SUBSONIC_PASS")
+		}
+		if len(missing) > 0 {
+			log.Fatalf("Missing required credentials for audit/reporting mode: %s. Provide via CLI flags, environment variables, or presets/config.", strings.Join(missing, ", "))
+		}
 	}
 
 	reader := bufio.NewReader(os.Stdin)
