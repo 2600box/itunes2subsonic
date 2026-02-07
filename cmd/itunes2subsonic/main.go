@@ -87,6 +87,14 @@ var (
 	remoteMatchThreshold    = flag.Float64("remote_match_threshold", 0.87, "threshold for MATCH status in remote match report")
 	remoteMatchLowThreshold = flag.Float64("remote_match_low_threshold", 0.75, "threshold for LOW_CONFIDENCE status in remote match report")
 	remoteMatchDebug        = flag.Bool("remote_match_debug", false, "print debug information for remote match mismatches")
+	verifyFlag              = flag.Bool("verify", false, "run the verify workflow (audit + verify_src_files) and emit a readiness report")
+	applyFlag               = flag.Bool("apply", false, "apply changes (alias for --dry_run=false)")
+	maxStaleMissingStars    = flag.Int("max_stale_missing_on_disk_stars", 0, "max stale_missing_on_disk allowed for stars before NO-GO")
+	maxStaleMissingRatings  = flag.Int("max_stale_missing_on_disk_ratings", 0, "max stale_missing_on_disk allowed for ratings before NO-GO")
+	maxStaleMissingPlays    = flag.Int("max_stale_missing_on_disk_playcounts", 0, "max stale_missing_on_disk allowed for playcounts before NO-GO")
+	playlistInvalidFatal    = flag.Bool("playlist_invalid_location_fatal", false, "treat playlist invalid_location as a NO-GO condition")
+	explainNotApplied       = flag.Bool("explain_not_applied", false, "print example rows for not-applied reasons from a run directory")
+	explainNotAppliedTopN   = flag.Int("explain_not_applied_topn", 3, "number of examples to print per not-applied reason")
 )
 
 var (
@@ -1586,6 +1594,9 @@ func writeAnalyseReport(path string, report dumpAnalysisReport) error {
 
 func main() {
 	flag.Parse()
+	if *applyFlag && *verifyFlag {
+		log.Fatal("--apply and --verify cannot be used together")
+	}
 	if *analyseDump != "" {
 		if err := runAnalyseDump(*analyseDump, *analyseMissing, *analyseReport); err != nil {
 			log.Fatalf("Failed to analyse dump %q: %s", *analyseDump, err)
@@ -1627,6 +1638,14 @@ func main() {
 			log.Fatalf("Preset %q looks like it contains placeholder values: %s\nUpdate configs or override with CLI flags (see resolved preset above).", *presetName, err)
 		}
 	}
+	if *verifyFlag {
+		*auditFlag = true
+		*verifySrcFiles = true
+		*dryRun = true
+	}
+	if *applyFlag {
+		*dryRun = false
+	}
 	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
 	var logFileHandle *os.File
 	if *logFile != "" {
@@ -1642,6 +1661,16 @@ func main() {
 	}
 	if logFileHandle != nil {
 		defer logFileHandle.Close()
+	}
+	if *explainNotApplied {
+		runDirValue := *runDir
+		if runDirValue == "" {
+			runDirValue = filepath.Join("run", "latest")
+		}
+		if err := explainNotAppliedFromRunDir(runDirValue, *explainNotAppliedTopN); err != nil {
+			log.Fatalf("Failed to explain not-applied rows: %s", err)
+		}
+		return
 	}
 	if *reportLibrary != "" {
 		filters := filterOptions{
@@ -1895,14 +1924,36 @@ func main() {
 			Threshold:    *remoteMatchThreshold,
 			LowThreshold: *remoteMatchLowThreshold,
 		}
-		if err := runAudit(c, *itunesXml, filterOptions{
+		result, err := runAudit(c, *itunesXml, filterOptions{
 			album:  *filterAlbum,
 			artist: *filterArtist,
 			name:   *filterName,
 			path:   *filterPath,
 			limit:  *limitTracks,
-		}, allowlist, selectedMatchMode, filterActive, *reportOnly, *runDir, *force, *failOnUnappliedLoved, paths, cfg, *remoteMatchDebug); err != nil {
+		}, allowlist, selectedMatchMode, filterActive, *reportOnly, *runDir, *force, *failOnUnappliedLoved, paths, cfg, *remoteMatchDebug)
+		if err != nil {
 			log.Fatalf("Audit failed: %s", err)
+		}
+		if *verifyFlag {
+			verifyCfg := verifyConfig{
+				AllowUnstar: *allowUnstar,
+				ConfigPath:  normalizeConfigPath(*configFile),
+				PresetName:  *presetName,
+				Thresholds: verifyThresholds{
+					MaxStaleMissingStars:      *maxStaleMissingStars,
+					MaxStaleMissingRatings:    *maxStaleMissingRatings,
+					MaxStaleMissingPlaycounts: *maxStaleMissingPlays,
+					PlaylistInvalidFatal:      *playlistInvalidFatal,
+				},
+			}
+			verifyReport := buildVerifyReport(result.Summary, verifyCfg)
+			if err := writeVerifyArtifacts(result.Summary.Inputs.RunDir, verifyReport); err != nil {
+				log.Fatalf("Failed to write verify artifacts: %s", err)
+			}
+			printVerifySummary(verifyReport)
+			if !verifyReport.Go {
+				os.Exit(2)
+			}
 		}
 		return
 	}
@@ -1953,6 +2004,22 @@ func main() {
 			}
 		}
 		return
+	}
+
+	if !*dryRun {
+		verifyReport, verifyPath, err := resolveVerifyReportForApply(*runDir, "run")
+		if err != nil && !*force {
+			log.Fatalf("Apply requires a prior --verify run (or use --force): %s", err)
+		}
+		if err == nil && !*force {
+			normalizedConfig := normalizeConfigPath(*configFile)
+			if verifyReport.ConfigPath != normalizedConfig || verifyReport.PresetName != *presetName {
+				log.Fatalf("Apply requires the latest verify to use the same config/preset. Found %s (config=%q preset=%q)", verifyPath, verifyReport.ConfigPath, verifyReport.PresetName)
+			}
+			if !verifyReport.Go {
+				log.Fatalf("Apply blocked because latest verify was NO-GO (%s). Re-run --verify or use --force.", verifyPath)
+			}
+		}
 	}
 
 	srcRelativePaths := buildRelativePathSet(srcSongs, *itunesRoot)
@@ -2156,6 +2223,53 @@ func main() {
 			byPath[p] = t
 		}
 		t.dst = s
+	}
+
+	plannedToStar, plannedToUnstar := buildStarUpdates(byPath)
+	var plannedRatingSet int64
+	var plannedRatingUnset int64
+	for _, v := range byPath {
+		if v.src.Id() == "" || v.dst.Id() == "" || v.src.FiveStarRating() == v.dst.FiveStarRating() {
+			continue
+		}
+		if v.src.FiveStarRating() == 0 && !*copyUnrated {
+			continue
+		}
+		if v.src.FiveStarRating() == 0 {
+			plannedRatingUnset++
+		} else {
+			plannedRatingSet++
+		}
+	}
+	var plannedPlayUpdates int64
+	for _, v := range byPath {
+		if v.src.Id() == "" || v.dst.Id() == "" {
+			continue
+		}
+		if v.src.playCount == 0 && v.src.playDate.IsZero() {
+			continue
+		}
+		if int64(v.src.playCount) <= v.dst.playCount && (v.src.playDate.IsZero() || v.dst.playCount > 0) {
+			continue
+		}
+		plannedPlayUpdates++
+	}
+	plannedPlaylistCount := 0
+	for _, playlist := range playlistRefs {
+		if playlist.Master || playlist.Name == "" {
+			continue
+		}
+		plannedPlaylistCount++
+	}
+	if !*dryRun {
+		fmt.Fprintf(stdoutWriter, "About to write: stars=%d unstar=%d ratings_set=%d ratings_unset=%d playcount_updates=%d playlists=%d\n",
+			len(plannedToStar),
+			len(plannedToUnstar),
+			plannedRatingSet,
+			plannedRatingUnset,
+			plannedPlayUpdates,
+			plannedPlaylistCount,
+		)
 	}
 
 	fmt.Fprintln(stdoutWriter, "== Missing Tracks ==")

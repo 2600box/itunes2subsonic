@@ -25,6 +25,7 @@ type preset struct {
 	SubsonicClient        string `json:"subsonic_client" yaml:"subsonic_client"`
 	MatchMode             string `json:"match_mode" yaml:"match_mode"`
 	RequireRealPath       *bool  `json:"require_real_path" yaml:"require_real_path"`
+	VerifySrcFiles        *bool  `json:"verify_src_files" yaml:"verify_src_files"`
 	DryRun                *bool  `json:"dry_run" yaml:"dry_run"`
 	Debug                 *bool  `json:"debug" yaml:"debug"`
 	RunDir                string `json:"run_dir" yaml:"run_dir"`
@@ -50,6 +51,7 @@ type resolvedPreset struct {
 	SubsonicClient        string            `json:"subsonic_client"`
 	MatchMode             string            `json:"match_mode"`
 	RequireRealPath       bool              `json:"require_real_path"`
+	VerifySrcFiles        bool              `json:"verify_src_files"`
 	DryRun                bool              `json:"dry_run"`
 	Debug                 bool              `json:"debug"`
 	RunDir                string            `json:"run_dir"`
@@ -111,6 +113,9 @@ func applyPreset(p preset, setFlags map[string]bool) {
 	}
 	if !setFlags["require_real_path"] && p.RequireRealPath != nil {
 		*requireRealPath = *p.RequireRealPath
+	}
+	if !setFlags["verify_src_files"] && p.VerifySrcFiles != nil {
+		*verifySrcFiles = *p.VerifySrcFiles
 	}
 	if !setFlags["dry_run"] && p.DryRun != nil {
 		*dryRun = *p.DryRun
@@ -179,6 +184,7 @@ func buildResolvedPreset(name string, p preset, setFlags map[string]bool, cfg ap
 		SubsonicClient:        *subsonicClient,
 		MatchMode:             *matchMode,
 		RequireRealPath:       requireRealPathValue,
+		VerifySrcFiles:        *verifySrcFiles,
 		DryRun:                dryRunValue,
 		Debug:                 debugValue,
 		RunDir:                *runDir,
@@ -204,6 +210,7 @@ func presetSourceMap(p preset, setFlags map[string]bool, cfg appConfig) map[stri
 	sources["subsonic_client"] = sourceForString("subsonic_client", setFlags, p.SubsonicClient, "")
 	sources["match_mode"] = sourceForString("match_mode", setFlags, p.MatchMode, "")
 	sources["require_real_path"] = sourceForBool("require_real_path", setFlags, p.RequireRealPath)
+	sources["verify_src_files"] = sourceForBool("verify_src_files", setFlags, p.VerifySrcFiles)
 	sources["dry_run"] = sourceForBool("dry_run", setFlags, p.DryRun)
 	sources["debug"] = sourceForBool("debug", setFlags, p.Debug)
 	sources["run_dir"] = sourceForString("run_dir", setFlags, p.RunDir, "")
