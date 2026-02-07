@@ -1,5 +1,16 @@
 version: 1
 presets:
+  menhir_verify:
+    # Copy this preset and run with: --preset menhir_verify --verify
+    # Credentials should be provided via SUBSONIC_USER / SUBSONIC_PASS environment variables.
+    itunes_xml: "Library.xml"
+    music_root: "/Volumes/fennec/Music/Media/Music"
+    subsonic_url: "http://10.0.0.114:4533"
+    subsonic_client: "itunes2subsonic"
+    match_mode: "realpath"
+    require_real_path: true
+    verify_src_files: true
+    dry_run: true
   audit:
     # Credentials should be provided via SUBSONIC_USER / SUBSONIC_PASS environment variables.
     itunes_xml: "Library.xml"

@@ -48,6 +48,14 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--report_only` (default: false): Avoid fetching the full Navidrome song list when filters are active (requires `--navidrome_dump`).
 * `--allow_unstar` (default: false): Allow unstar operations when `--dry_run=false`.
 * `--allow_reconcile_mismatch` (default: false): Allow reconcile invariant mismatches (writes report, exits 0).
+* `--verify` (default: false): Run the verify workflow (audit + verify_src_files) and emit a readiness report.
+* `--apply` (default: false): Apply changes (alias for `--dry_run=false`); requires a prior `--verify` run unless `--force` is used.
+* `--max_stale_missing_on_disk_stars` (default: `0`): Max stale_missing_on_disk entries allowed for stars before NO-GO.
+* `--max_stale_missing_on_disk_ratings` (default: `0`): Max stale_missing_on_disk entries allowed for ratings before NO-GO.
+* `--max_stale_missing_on_disk_playcounts` (default: `0`): Max stale_missing_on_disk entries allowed for playcounts before NO-GO.
+* `--playlist_invalid_location_fatal` (default: `false`): Treat playlist invalid_location as a NO-GO condition.
+* `--explain_not_applied` (default: false): Print example rows for not-applied reasons from a run directory.
+* `--explain_not_applied_topn` (default: `3`): Number of examples to print per not-applied reason.
 * `--config` (default: empty): YAML config file containing presets.
 * `--preset` (default: empty): Preset name to load from `--config`.
 * `--dump_preset` (default: false): Print the resolved preset configuration and exit.
@@ -85,6 +93,43 @@ Use the reporting flags to produce deterministic audit artifacts before running 
 
 These artifacts are designed to be diffed between runs and to make it explicit which tracks will be starred/unstarred and why.
 
+### Verify → inspect → apply workflow
+
+Use the `--verify` workflow to generate a single GO/NO-GO report and operator-friendly next steps:
+
+```sh
+$ go run ./cmd/itunes2subsonic \
+  --config configs/menhir.example.yaml \
+  --preset menhir_verify \
+  --verify
+```
+
+Verify mode:
+
+* Runs the full audit workflow with `--verify_src_files` enabled.
+* Writes `verify_report.json` and `summary.txt` into `run/YYYYMMDDTHHMMSS/`.
+* Emits a GO/NO-GO summary to stdout, including the exact follow-up command to run next.
+
+If the report is GO, apply changes safely with:
+
+```sh
+$ go run ./cmd/itunes2subsonic \
+  --config configs/menhir.example.yaml \
+  --preset menhir_verify \
+  --apply \
+  --allow_unstar
+```
+
+Apply mode refuses to run unless the most recent `--verify` was GO with the same config/preset (use `--force` to override).
+
+Use `--explain_not_applied` to list example rows per (domain, reason) without external tools:
+
+```sh
+$ go run ./cmd/itunes2subsonic \
+  --run_dir run/20240101T120000 \
+  --explain_not_applied
+```
+
 ### Presets & one-shot audit runs
 
 Create a preset file (examples in `configs/example.yaml` and `configs/menhir.example.yaml`) and run a single, repeatable audit that writes all artifacts into a run directory:
@@ -113,6 +158,8 @@ Audit mode writes:
 * `navidrome_starred_baseline.tsv`
 
 The `not_applied_*` reports include per-domain reason codes and track identifiers (artist/album/title/path + Apple track ID + Navidrome ID when available). Use `audit_summary.tsv` for quick diffable counts.
+
+All `.tsv` outputs are TAB-delimited (literal `\t`), and the headers in each file reflect the column order.
 
 Use `--dump_preset` to see the resolved config for a preset (including which fields came from CLI vs preset vs env/config).
 

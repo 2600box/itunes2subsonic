@@ -21,10 +21,14 @@ type auditRemoteMatchPaths struct {
 	tsvPath  string
 }
 
-func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, runDir string, force bool, failOnUnappliedLoved bool, remoteMatchPaths auditRemoteMatchPaths, remoteMatchConfig pkgreport.RemoteMatchConfig, remoteMatchDebug bool) error {
+type auditResult struct {
+	Summary report.AuditSummary
+}
+
+func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, runDir string, force bool, failOnUnappliedLoved bool, remoteMatchPaths auditRemoteMatchPaths, remoteMatchConfig pkgreport.RemoteMatchConfig, remoteMatchDebug bool) (auditResult, error) {
 	resolvedRunDir, err := ensureRunDir(runDir, force)
 	if err != nil {
-		return err
+		return auditResult{}, err
 	}
 	planPath := filepath.Join(resolvedRunDir, "sync_plan.json")
 	reconcilePath := filepath.Join(resolvedRunDir, "reconcile.json")
@@ -47,29 +51,29 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 
 	plan, stats, navidromeSongs, starredSongs, dstSongs, appleTracks, err := buildSyncPlan(c, itunesXML, filters, allowlist, selectedMatchMode, filterActive, reportOnly)
 	if err != nil {
-		return err
+		return auditResult{}, err
 	}
 
 	if err := writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, planTSVBase); err != nil {
-		return err
+		return auditResult{}, err
 	}
 	if err := writeNavidromeBaselineTSV(starredBaselinePath, starredSongs); err != nil {
-		return err
+		return auditResult{}, err
 	}
 	if reportOnly {
 		if *dumpFile == "" {
-			return fmt.Errorf("--report_only requires --navidrome_dump for audit mode")
+			return auditResult{}, fmt.Errorf("--report_only requires --navidrome_dump for audit mode")
 		}
 		if err := copyFile(*dumpFile, dumpPath); err != nil {
-			return err
+			return auditResult{}, err
 		}
 	} else if len(dstSongs) > 0 {
 		if err := writeNavidromeDump(dumpPath, dstSongs, *subsonicRoot, selectedMatchMode); err != nil {
-			return err
+			return auditResult{}, err
 		}
 	}
 	if err := runReportReconcile(itunesXML, planPath, reconcilePath, filters, *allowReconcileMismatch); err != nil {
-		return err
+		return auditResult{}, err
 	}
 
 	generatedAt := time.Now().UTC()
@@ -87,14 +91,14 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 		playlistsTSVPath:   notAppliedPlaylistsTSVPath,
 		playlistsJSONPath:  notAppliedPlaylistsJSONPath,
 	}, notApplied); err != nil {
-		return err
+		return auditResult{}, err
 	}
 
 	var remoteSummary *report.RemoteMatchSummary
 	if remoteMatchPaths.jsonPath != "" || remoteMatchPaths.tsvPath != "" {
 		remoteReport, err := runRemoteMatchReport(appleTracks, navidromeSongs, remoteMatchPaths, remoteMatchConfig, remoteMatchDebug)
 		if err != nil {
-			return err
+			return auditResult{}, err
 		}
 		remoteSummary = &remoteReport.Summary
 	}
@@ -137,17 +141,17 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 		remoteMatchPaths: remoteMatchPaths,
 	})
 	if err := report.WriteJSON(auditSummaryPath, auditSummary); err != nil {
-		return err
+		return auditResult{}, err
 	}
 	if err := writeAuditSummaryTSV(auditSummaryTSVPath, auditSummary); err != nil {
-		return err
+		return auditResult{}, err
 	}
 
 	if failOnUnappliedLoved && plan.Counts.LovedNotApplied.Total > 0 {
-		return fmt.Errorf("loved not applied count was %d", plan.Counts.LovedNotApplied.Total)
+		return auditResult{}, fmt.Errorf("loved not applied count was %d", plan.Counts.LovedNotApplied.Total)
 	}
 
-	return nil
+	return auditResult{Summary: auditSummary}, nil
 }
 
 func ensureRunDir(runDir string, force bool) (string, error) {
