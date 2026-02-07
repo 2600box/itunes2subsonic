@@ -58,18 +58,54 @@ func ScoreComposite(artistTokens []string, albumTokens []string, titleTokens []s
 	return composite, method
 }
 
+func compareCandidates(a Candidate, b Candidate) int {
+	if a.Score != b.Score {
+		if a.Score > b.Score {
+			return -1
+		}
+		return 1
+	}
+	if a.Path != b.Path {
+		return compareString(a.Path, b.Path)
+	}
+	if a.SongID != b.SongID {
+		return compareString(a.SongID, b.SongID)
+	}
+	if a.Artist != b.Artist {
+		return compareString(a.Artist, b.Artist)
+	}
+	if a.Album != b.Album {
+		return compareString(a.Album, b.Album)
+	}
+	if a.Title != b.Title {
+		return compareString(a.Title, b.Title)
+	}
+	if a.NormArtist != b.NormArtist {
+		return compareString(a.NormArtist, b.NormArtist)
+	}
+	if a.NormAlbum != b.NormAlbum {
+		return compareString(a.NormAlbum, b.NormAlbum)
+	}
+	if a.NormTitle != b.NormTitle {
+		return compareString(a.NormTitle, b.NormTitle)
+	}
+	return 0
+}
+
+func compareString(a string, b string) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
 func StableSortCandidates(candidates []Candidate, topN int) []Candidate {
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score > candidates[j].Score
-		}
-		if len(candidates[i].Path) != len(candidates[j].Path) {
-			return len(candidates[i].Path) < len(candidates[j].Path)
-		}
-		if candidates[i].Path != candidates[j].Path {
-			return candidates[i].Path < candidates[j].Path
-		}
-		return candidates[i].SongID < candidates[j].SongID
+	// Ensure a deterministic total order for candidates regardless of input order.
+	sort.Slice(candidates, func(i, j int) bool {
+		return compareCandidates(candidates[i], candidates[j]) < 0
 	})
 	if topN <= 0 || len(candidates) <= topN {
 		return candidates
