@@ -88,6 +88,18 @@ func TestStableSortCandidatesMapIteration(t *testing.T) {
 	}
 }
 
+func TestStableSortCandidatesUsesNormalizedTieBreakers(t *testing.T) {
+	t.Parallel()
+	candidates := []Candidate{
+		{SongID: "a", Path: "/zz/longer.flac", Score: 0.9, NormArtist: "beta"},
+		{SongID: "b", Path: "/aa/short.flac", Score: 0.9, NormArtist: "alpha"},
+	}
+	ordered := StableSortCandidates(candidates, 0)
+	if ordered[0].SongID != "b" {
+		t.Fatalf("expected normalized artist tie-breaker to sort first, got %s", ordered[0].SongID)
+	}
+}
+
 func TestCompareCandidatesTotalOrder(t *testing.T) {
 	t.Parallel()
 	candidates := []Candidate{

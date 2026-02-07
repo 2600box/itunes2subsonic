@@ -65,11 +65,14 @@ func compareCandidates(a Candidate, b Candidate) int {
 		}
 		return 1
 	}
-	if a.Path != b.Path {
-		return compareString(a.Path, b.Path)
+	if a.NormArtist != b.NormArtist {
+		return compareString(a.NormArtist, b.NormArtist)
 	}
-	if a.SongID != b.SongID {
-		return compareString(a.SongID, b.SongID)
+	if a.NormAlbum != b.NormAlbum {
+		return compareString(a.NormAlbum, b.NormAlbum)
+	}
+	if a.NormTitle != b.NormTitle {
+		return compareString(a.NormTitle, b.NormTitle)
 	}
 	if a.Artist != b.Artist {
 		return compareString(a.Artist, b.Artist)
@@ -80,14 +83,11 @@ func compareCandidates(a Candidate, b Candidate) int {
 	if a.Title != b.Title {
 		return compareString(a.Title, b.Title)
 	}
-	if a.NormArtist != b.NormArtist {
-		return compareString(a.NormArtist, b.NormArtist)
+	if a.Path != b.Path {
+		return compareString(a.Path, b.Path)
 	}
-	if a.NormAlbum != b.NormAlbum {
-		return compareString(a.NormAlbum, b.NormAlbum)
-	}
-	if a.NormTitle != b.NormTitle {
-		return compareString(a.NormTitle, b.NormTitle)
+	if a.SongID != b.SongID {
+		return compareString(a.SongID, b.SongID)
 	}
 	return 0
 }
@@ -103,12 +103,29 @@ func compareString(a string, b string) int {
 }
 
 func StableSortCandidates(candidates []Candidate, topN int) []Candidate {
-	// Ensure a deterministic total order for candidates regardless of input order.
-	sort.Slice(candidates, func(i, j int) bool {
-		return compareCandidates(candidates[i], candidates[j]) < 0
+	type candidateWithIndex struct {
+		candidate Candidate
+		index     int
+	}
+	indexed := make([]candidateWithIndex, 0, len(candidates))
+	for i, candidate := range candidates {
+		indexed = append(indexed, candidateWithIndex{candidate: candidate, index: i})
+	}
+	sort.SliceStable(indexed, func(i, j int) bool {
+		order := compareCandidates(indexed[i].candidate, indexed[j].candidate)
+		if order != 0 {
+			return order < 0
+		}
+		return indexed[i].index < indexed[j].index
 	})
-	if topN <= 0 || len(candidates) <= topN {
+	if topN <= 0 || len(indexed) <= topN {
+		for i := range indexed {
+			candidates[i] = indexed[i].candidate
+		}
 		return candidates
+	}
+	for i := 0; i < topN; i++ {
+		candidates[i] = indexed[i].candidate
 	}
 	return candidates[:topN]
 }

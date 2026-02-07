@@ -83,22 +83,16 @@ Use the reporting flags to produce deterministic audit artifacts before running 
 * The run directory (same as `--log_file`, or next to the report path) also receives TSVs:
   * `plan_star.tsv`, `plan_unstar.tsv`, `unapplied_loved.tsv`, and `unapplied_rated.tsv` (if rating mismatches are reconciled).
 
-Each TSV uses the columns:
-
-```
-op    navidrome_id    apple_track_id    artist    album    title    path    reason_code    match_mode    match_confidence
-```
-
 These artifacts are designed to be diffed between runs and to make it explicit which tracks will be starred/unstarred and why.
 
 ### Presets & one-shot audit runs
 
-Create a preset file (example in `configs/example.yaml`) and run a single, repeatable audit that writes all artifacts into a run directory:
+Create a preset file (examples in `configs/example.yaml` and `configs/menhir.example.yaml`) and run a single, repeatable audit that writes all artifacts into a run directory:
 
 ```sh
 $ go run ./cmd/itunes2subsonic \\
-  --config configs/example.yaml \\
-  --preset personal-audit \\
+  --config configs/menhir.example.yaml \\
+  --preset audit \\
   --audit \\
   --run_dir run/20240101T120000
 ```
@@ -109,10 +103,37 @@ Audit mode writes:
 * `sync_plan.json`
 * `reconcile.json`
 * `sync_plan_*.tsv` (stars/ratings/playcounts/playlists/unstar)
+* `not_applied_summary.json`
+* `not_applied_{stars,ratings,playcounts,playlists}.tsv`
+* `not_applied_{stars,ratings,playcounts,playlists}.json`
+* `not_applied_all.tsv`
+* `not_applied_all.json`
 * `audit_summary.json`
+* `audit_summary.tsv`
 * `navidrome_starred_baseline.tsv`
 
-Use `--dump_preset` to see the resolved config for a preset.
+The `not_applied_*` reports include per-domain reason codes and track identifiers (artist/album/title/path + Apple track ID + Navidrome ID when available). Use `audit_summary.tsv` for quick diffable counts.
+
+Use `--dump_preset` to see the resolved config for a preset (including which fields came from CLI vs preset vs env/config).
+
+#### Manual audit (no preset)
+
+You can run audit mode without `--config`/`--preset` as long as you supply the core flags:
+
+```sh
+$ RUN_DIR="$(ls -dt run/* | head -n 1)"
+$ go run ./cmd/itunes2subsonic \\
+  --itunes_xml Library.xml \\
+  --music_root="/Volumes/fennec/Music/Media/Music" \\
+  --subsonic="http://10.0.0.114:4533" \\
+  --dry_run=true \\
+  --audit \\
+  --run_dir "$RUN_DIR" \\
+  --force \\
+  --remote_match_debug=true \\
+  --report_remote_match_json "$RUN_DIR/remote_match.json" \\
+  --report_remote_match_tsv  "$RUN_DIR/remote_match.tsv"
+```
 
 ### Remote loved/rated fuzzy match reports
 
@@ -127,6 +148,8 @@ $ go run ./cmd/itunes2subsonic \\
   --report_remote_match_tsv run/20240101T120000/remote_match.tsv
 ```
 
+Remote match reports can be generated via `--audit` or by pairing `--report_remote_match_*` with `--report_sync_plan`.
+
 The remote match report classifies each remote track as:
 
 * `MATCH` (score >= `--remote_match_threshold`)
@@ -139,7 +162,7 @@ LOW_CONFIDENCE entries are also summarized in the report for manual review.
 
 Use `--write_missing` to generate a JSON report with counts, missing entries, and classifications. Missing entries only include actionable mismatches between eligible Apple Music file-backed tracks and eligible Navidrome tracks. Apple Music streaming catalog entries (Track Type `Remote` / `Apple Music` true / missing `Location`) are excluded from matching, but are counted and sampled separately. The default extension allowlist excludes video formats like `.mp4` unless added via `--extensions`.
 
-Default extensions: `.mp3`, `.m4a`, `.flac`, `.ogg`, `.opus`, `.aac`, `.wav`, `.aiff`, `.alac`.
+Default extensions: `.mp3`, `.m4a`, `.flac`, `.ogg`, `.opus`, `.aac`, `.wav`, `.aiff`, `.alac`. (`.aif` is not included unless explicitly added.)
 
 ### Analyse a dump locally
 
