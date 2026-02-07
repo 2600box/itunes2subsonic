@@ -542,21 +542,18 @@ func runReportLibraryStats(itunesXML string, filters filterOptions, outJSON stri
 	return nil
 }
 
-func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool) error {
-	if planPath == "" {
-		return fmt.Errorf("--report_sync_plan requires a path")
-	}
+func buildSyncPlan(c *subsonic.Client, itunesXML string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool) (report.SyncPlan, report.LibraryStats, []navidromeSong, []navidromeStarredSong, []subsonicInfo, []appleTrackInfo, error) {
 	if reportOnly && *dumpFile == "" {
-		return fmt.Errorf("--report_only requires --navidrome_dump to build a sync plan")
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil, nil, fmt.Errorf("--report_only requires --navidrome_dump to build a sync plan")
 	}
 	appleTracks, eligibleSrc, playlistRefs, stats, err := loadAppleTracks(itunesXML, filters, allowlist, *verifySrcFiles, true)
 	if err != nil {
-		return err
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil, nil, err
 	}
 
 	starredSongs, err := fetchStarredSongs(c)
 	if err != nil {
-		return err
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil, nil, err
 	}
 	starredByID := make(map[string]navidromeStarredSong, len(starredSongs))
 	for _, song := range starredSongs {
@@ -564,18 +561,20 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	}
 
 	var navidromeSongs []navidromeSong
+	var dstSongs []subsonicInfo
 	if reportOnly {
 		entries, err := loadNavidromeDump(*dumpFile)
 		if err != nil {
-			return err
+			return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil, nil, err
 		}
 		navidromeSongs = buildNavidromeSongsFromDump(entries, *subsonicRoot, selectedMatchMode, allowlist)
 	} else {
 		fetchBar := i2s.PbWithOptions(pb.Default(-1, "fetching navidrome data"))
-		dstSongs, err := fetchSubsonicSongs(c, fetchBar)
+		songs, err := fetchSubsonicSongs(c, fetchBar)
 		if err != nil {
-			return err
+			return report.SyncPlan{}, report.LibraryStats{}, nil, nil, nil, nil, err
 		}
+		dstSongs = songs
 		if *itunesRoot == "" && *subsonicRoot == "" && !filterActive {
 			srcInfo := make([]i2s.SongInfo, 0, len(eligibleSrc))
 			for _, si := range eligibleSrc {
@@ -943,6 +942,39 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	sortUnstarPlanEntries(plan.Unstar.WontUnstar)
 	sortPlaylistPlanEntries(plan.Playlists.Entries)
 
+	return plan, stats, navidromeSongs, starredSongs, dstSongs, appleTracks, nil
+}
+
+func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool) error {
+	if planPath == "" {
+		return fmt.Errorf("--report_sync_plan requires a path")
+	}
+	plan, stats, _, _, _, _, err := buildSyncPlan(c, itunesXML, filters, allowlist, selectedMatchMode, filterActive, reportOnly)
+	if err != nil {
+		return err
+	}
+	printPlanSummary(stats, plan)
+	printDryRunSummary(stats, plan)
+	return writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, *reportSyncPlanTSV)
+}
+
+func runReportSyncPlanWithData(c *subsonic.Client, itunesXML string, planPath string, filters filterOptions, allowlist map[string]struct{}, selectedMatchMode matchModeValue, filterActive bool, reportOnly bool, planTSVBase string) (report.SyncPlan, report.LibraryStats, []navidromeSong, []appleTrackInfo, error) {
+	if planPath == "" {
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, fmt.Errorf("--report_sync_plan requires a path")
+	}
+	plan, stats, navidromeSongs, _, _, appleTracks, err := buildSyncPlan(c, itunesXML, filters, allowlist, selectedMatchMode, filterActive, reportOnly)
+	if err != nil {
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, err
+	}
+	printPlanSummary(stats, plan)
+	printDryRunSummary(stats, plan)
+	if err := writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, planTSVBase); err != nil {
+		return report.SyncPlan{}, report.LibraryStats{}, nil, nil, err
+	}
+	return plan, stats, navidromeSongs, appleTracks, nil
+}
+
+func printPlanSummary(stats report.LibraryStats, plan report.SyncPlan) {
 	fmt.Fprintf(stdoutWriter, "Apple Tracks: total=%d local=%d remote=%d\n", plan.Counts.AppleTracks.Total, plan.Counts.AppleTracks.Local, plan.Counts.AppleTracks.Remote)
 	fmt.Fprintf(stdoutWriter, "Apple Loved: total=%d local=%d remote=%d\n", plan.Counts.AppleLoved.Total, plan.Counts.AppleLoved.Local, plan.Counts.AppleLoved.Remote)
 	fmt.Fprintf(stdoutWriter, "Apple Loved Only: total=%d local=%d remote=%d\n", stats.LovedOnly.Total, stats.LovedOnly.Local, stats.LovedOnly.Remote)
@@ -959,8 +991,9 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	printReasonCounts(plan.Counts.LovedNotApplied.ByReason)
 	fmt.Fprintf(stdoutWriter, "Rated not applied: %d\n", plan.Counts.RatedNotApplied.Total)
 	printReasonCounts(plan.Counts.RatedNotApplied.ByReason)
-	printDryRunSummary(stats, plan)
+}
 
+func writeSyncPlanArtifacts(planPath string, plan report.SyncPlan, selectedMatchMode matchModeValue, planTSVBase string) error {
 	if err := report.WriteJSON(planPath, plan); err != nil {
 		return err
 	}
@@ -970,7 +1003,6 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 	unstarPath := filepath.Join(planDir, "plan_unstar.tsv")
 	lovedNotAppliedPath := filepath.Join(planDir, "unapplied_loved.tsv")
 	ratedNotAppliedPath := filepath.Join(planDir, "unapplied_rated.tsv")
-	planTSVBase := *reportSyncPlanTSV
 	if err := report.WriteTSV(starPath, planAuditHeader(), buildPlanStarRows(plan.Loved.WillStar, selectedMatchMode)); err != nil {
 		return err
 	}
@@ -990,7 +1022,6 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 			return err
 		}
 	}
-
 	return nil
 }
 

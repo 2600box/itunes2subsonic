@@ -43,9 +43,22 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--report_sync_plan_tsv` (default: empty): Write sync plan TSV reports using the given path as a base name.
 * `--report_reconcile` (default: empty): Write a reconcile report comparing Library.xml stats and sync plan counts (requires `--report_sync_plan`).
 * `--out_tsv` (default: empty): Write a TSV summary when reporting library stats.
+* `--report_remote_match_json` (default: empty): Write remote loved/rated fuzzy match report to JSON.
+* `--report_remote_match_tsv` (default: empty): Write remote loved/rated fuzzy match report to TSV.
 * `--report_only` (default: false): Avoid fetching the full Navidrome song list when filters are active (requires `--navidrome_dump`).
 * `--allow_unstar` (default: false): Allow unstar operations when `--dry_run=false`.
 * `--allow_reconcile_mismatch` (default: false): Allow reconcile invariant mismatches (writes report, exits 0).
+* `--config` (default: empty): YAML config file containing presets.
+* `--preset` (default: empty): Preset name to load from `--config`.
+* `--dump_preset` (default: false): Print the resolved preset configuration and exit.
+* `--run_dir` (default: empty): Run directory for audit artifacts (defaults to `run/YYYYMMDDTHHMMSS`).
+* `--audit` (default: false): Run the standard audit workflow.
+* `--force` (default: false): Overwrite existing `--run_dir` artifacts.
+* `--fail_on_unapplied_loved` (default: false): Exit non-zero when Loved not applied is greater than zero.
+* `--remote_match_topn` (default: `5`): Top-N candidates to keep in remote match JSON.
+* `--remote_match_threshold` (default: `0.87`): MATCH threshold for remote match reports.
+* `--remote_match_low_threshold` (default: `0.75`): LOW_CONFIDENCE threshold for remote match reports.
+* `--remote_match_debug` (default: false): Print debug information for remote match mismatches.
 * `--created_file` (unused): Placeholder for writing SQL to update created timestamps.
 
 When filters are used, automatic library root detection is skipped; provide `--itunes_root` and
@@ -77,6 +90,50 @@ op    navidrome_id    apple_track_id    artist    album    title    path    reas
 ```
 
 These artifacts are designed to be diffed between runs and to make it explicit which tracks will be starred/unstarred and why.
+
+### Presets & one-shot audit runs
+
+Create a preset file (example in `configs/example.yaml`) and run a single, repeatable audit that writes all artifacts into a run directory:
+
+```sh
+$ go run ./cmd/itunes2subsonic \\
+  --config configs/example.yaml \\
+  --preset personal-audit \\
+  --audit \\
+  --run_dir run/20240101T120000
+```
+
+Audit mode writes:
+
+* `navidrome_dump.json`
+* `sync_plan.json`
+* `reconcile.json`
+* `sync_plan_*.tsv` (stars/ratings/playcounts/playlists/unstar)
+* `audit_summary.json`
+* `navidrome_starred_baseline.tsv`
+
+Use `--dump_preset` to see the resolved config for a preset.
+
+### Remote loved/rated fuzzy match reports
+
+To check Apple Music *remote* loved/rated tracks against Navidrome/local entries:
+
+```sh
+$ go run ./cmd/itunes2subsonic \\
+  --config configs/example.yaml \\
+  --preset personal-audit \\
+  --audit \\
+  --report_remote_match_json run/20240101T120000/remote_match.json \\
+  --report_remote_match_tsv run/20240101T120000/remote_match.tsv
+```
+
+The remote match report classifies each remote track as:
+
+* `MATCH` (score >= `--remote_match_threshold`)
+* `LOW_CONFIDENCE` (score >= `--remote_match_low_threshold`)
+* `NO_MATCH` (below low threshold)
+
+LOW_CONFIDENCE entries are also summarized in the report for manual review.
 
 ### Missing reports
 

@@ -1,0 +1,19 @@
+version: 1
+presets:
+  personal-audit:
+    itunes_xml: "/Users/me/Music/Apple Music Library.xml"
+    itunes_root: "/Users/me/Music"
+    subsonic_root: "/music"
+    music_root: "/srv/music"
+    subsonic_url: "https://navidrome.example.com"
+    subsonic_user: "navidrome-user"
+    subsonic_pass: "navidrome-pass"
+    subsonic_client: "itunes2subsonic"
+    match_mode: "realpath"
+    require_real_path: true
+    report_sync_plan: "run/latest/sync_plan.json"
+    report_sync_plan_tsv: "run/latest/sync_plan"
+    report_reconcile: "run/latest/reconcile.json"
+    navidrome_dump: "run/latest/navidrome_dump.json"
+    report_library_stats: "run/latest/library_stats.json"
+    out_tsv: "run/latest/library_stats.tsv"
