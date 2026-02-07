@@ -59,6 +59,10 @@ var (
 	analyseDump     = flag.String("analyse_dump", "", "analyse a Navidrome dump JSON file and print a summary")
 	analyseReport   = flag.String("analyse_report", "", "write analysis output from --analyse_dump to JSON")
 	analyseMissing  = flag.String("analyse_missing", "", "include an existing missing report when analysing a dump")
+	reportLibrary   = flag.String("report_library_stats", "", "write Library.xml stats report to JSON")
+	reportSyncPlan  = flag.String("report_sync_plan", "", "write sync plan report to JSON")
+	reportOutTSV    = flag.String("out_tsv", "", "write a TSV summary when reporting library stats")
+	reportOnly      = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
 	subsonicClient  = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
 	requireRealPath = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
 	matchMode       = flag.String("match_mode", "realpath", "path matching mode: realpath or lenient")
@@ -77,6 +81,9 @@ type subsonicInfo struct {
 	rating    int
 	playCount int64
 	starred   bool
+	title     string
+	artist    string
+	album     string
 }
 
 func (s subsonicInfo) Id() string          { return s.id }
@@ -318,7 +325,10 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 				path:      s.Path,
 				rating:    s.UserRating,
 				playCount: s.PlayCount,
-				starred:   !s.Starred.IsZero(),
+				starred:   false,
+				title:     s.Title,
+				artist:    s.Artist,
+				album:     s.Album,
 			})
 		}
 
@@ -1459,6 +1469,19 @@ func main() {
 	if logFileHandle != nil {
 		defer logFileHandle.Close()
 	}
+	if *reportLibrary != "" {
+		filters := filterOptions{
+			album:  *filterAlbum,
+			artist: *filterArtist,
+			name:   *filterName,
+			path:   *filterPath,
+			limit:  *limitTracks,
+		}
+		if err := runReportLibraryStats(*itunesXml, filters, *reportLibrary, *reportOutTSV); err != nil {
+			log.Fatalf("Failed to report library stats: %s", err)
+		}
+		return
+	}
 	cfg := loadConfig()
 	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), cfg.SubsonicUser)
 	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), cfg.SubsonicPass)
@@ -1672,6 +1695,20 @@ func main() {
 		log.Printf("Subsonic client: c=%q", *subsonicClient)
 	}
 
+	if *reportSyncPlan != "" {
+		filters := filterOptions{
+			album:  *filterAlbum,
+			artist: *filterArtist,
+			name:   *filterName,
+			path:   *filterPath,
+			limit:  *limitTracks,
+		}
+		if err := runReportSyncPlan(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly); err != nil {
+			log.Fatalf("Failed to report sync plan: %s", err)
+		}
+		return
+	}
+
 	srcRelativePaths := buildRelativePathSet(srcSongs, *itunesRoot)
 
 	if *probeSongID != "" {
@@ -1737,6 +1774,19 @@ func main() {
 	dstSongs, err := fetchSubsonicSongs(c, fetchBar)
 	if err != nil {
 		log.Fatalf("Failed fetching navidrome songs: %s", err)
+	}
+	starredSongs, err := fetchStarredSongs(c)
+	if err != nil {
+		log.Fatalf("Failed fetching navidrome starred songs: %s", err)
+	}
+	starredByID := make(map[string]struct{}, len(starredSongs))
+	for _, song := range starredSongs {
+		starredByID[song.ID] = struct{}{}
+	}
+	for i := range dstSongs {
+		if _, ok := starredByID[dstSongs[i].Id()]; ok {
+			dstSongs[i].starred = true
+		}
 	}
 
 	dstEligible := make([]subsonicInfo, 0, len(dstSongs))
