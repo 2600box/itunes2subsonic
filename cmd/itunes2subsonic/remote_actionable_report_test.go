@@ -1,110 +1,93 @@
 package main
 
 import (
-	"bytes"
-	"encoding/csv"
-	"strings"
+	"fmt"
 	"testing"
 
+	"github.com/logank/itunes2subsonic/internal/itunes"
 	"github.com/logank/itunes2subsonic/internal/report"
-	pkgreport "github.com/logank/itunes2subsonic/pkg/report"
 )
 
 func TestBuildRemoteActionableReportFilters(t *testing.T) {
-	header := pkgreport.TSVHeaderRemoteMatch()
-	rows := []map[string]string{
-		{
-			"apple_track_id":            "1",
-			"apple_persistent_id":       "PID1",
-			"loved":                     "true",
-			"rating":                    "",
-			"artist":                    "Artist1",
-			"album":                     "Album1",
-			"title":                     "Title1",
-			"match_status":              string(report.RemoteMatchStatusMatch),
-			"matched_navidrome_song_id": "song1",
-			"matched_path":              "/music/one.mp3",
-			"match_score":               "0.9900",
-			"match_method":              "path",
-			"candidate_count":           "1",
-		},
-		{
-			"apple_track_id":            "2",
-			"apple_persistent_id":       "PID2",
-			"loved":                     "true",
-			"rating":                    "80",
-			"artist":                    "Artist2",
-			"album":                     "Album2",
-			"title":                     "Title2",
-			"match_status":              string(report.RemoteMatchStatusMatch),
-			"matched_navidrome_song_id": "song2",
-			"matched_path":              "/music/two.mp3",
-			"match_score":               "0.9700",
-			"match_method":              "path",
-			"candidate_count":           "1",
-		},
-		{
-			"apple_track_id":            "3",
-			"apple_persistent_id":       "PID3",
-			"loved":                     "false",
-			"rating":                    "60",
-			"artist":                    "Artist3",
-			"album":                     "Album3",
-			"title":                     "Title3",
-			"match_status":              string(report.RemoteMatchStatusLowConfidence),
-			"matched_navidrome_song_id": "song3",
-			"matched_path":              "/music/three.mp3",
-			"match_score":               "0.7600",
-			"match_method":              "fuzzy",
-			"candidate_count":           "2",
-		},
-		{
-			"apple_track_id":            "4",
-			"apple_persistent_id":       "PID4",
-			"loved":                     "false",
-			"rating":                    "40",
-			"artist":                    "Artist4",
-			"album":                     "Album4",
-			"title":                     "Title4",
-			"match_status":              string(report.RemoteMatchStatusMatch),
-			"matched_navidrome_song_id": "song4",
-			"matched_path":              "/music/four.mp3",
-			"match_score":               "0.9500",
-			"match_method":              "path",
-			"candidate_count":           "1",
-		},
+	baseFileURL := "file:///Volumes/fennec/Music/Media/Music/Unknown%20Artist/Unknown%20Album/"
+	basePath := "/Volumes/fennec/Music/Media/Music/Unknown Artist/Unknown Album/"
+	trackPathA := basePath + "Andidepressiva-Die Menschmaschiene.mp3"
+	trackFileA := baseFileURL + "Andidepressiva-Die%20Menschmaschiene.mp3"
+	trackPathB := basePath + "Second Song.mp3"
+	trackFileB := baseFileURL + "Second%20Song.mp3"
+	trackPathC := basePath + "Third Song.mp3"
+	trackFileC := baseFileURL + "Third%20Song.mp3"
+	trackPathDup := basePath + "Duplicate Song.mp3"
+	trackFileDup := baseFileURL + "Duplicate%20Song.mp3"
+	trackPathMissing := basePath + "Missing Song.mp3"
+
+	appleTracks := []appleTrackInfo{
+		buildAppleTrackInfo(1, trackFileA, 0, false),
+		buildAppleTrackInfo(2, trackFileB, 80, true),
+		buildAppleTrackInfo(3, trackFileC, 20, false),
+		buildAppleTrackInfo(4, trackFileDup, 0, false),
+		buildAppleTrackInfo(5, trackFileDup, 40, true),
+	}
+	localIndex := buildLocalMetaIndex(appleTracks)
+
+	normalizedPath, ok := normalizeActionableMatchedPath(trackPathA)
+	if !ok {
+		t.Fatalf("expected normalized path for %q", trackPathA)
+	}
+	if len(localIndex[normalizedPath]) != 1 {
+		t.Fatalf("expected normalized location to match local index, got %d entries", len(localIndex[normalizedPath]))
 	}
 
-	buf := &bytes.Buffer{}
-	writer := csv.NewWriter(buf)
-	writer.Comma = '\t'
-	if err := writer.Write(header); err != nil {
-		t.Fatalf("write header: %v", err)
-	}
-	for _, row := range rows {
-		record := make([]string, len(header))
-		for i, column := range header {
-			record[i] = row[column]
-		}
-		if err := writer.Write(record); err != nil {
-			t.Fatalf("write row: %v", err)
-		}
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		t.Fatalf("flush: %v", err)
-	}
-
-	entries, err := parseRemoteMatchTSV(strings.NewReader(buf.String()))
-	if err != nil {
-		t.Fatalf("parse TSV: %v", err)
-	}
-
-	localIndex := map[int]localTrackMeta{
-		1: {Loved: false, Rating: 0},
-		2: {Loved: true, Rating: 80},
-		3: {Loved: false, Rating: 0},
-		4: {Loved: false, Rating: 20},
+	entries := []report.RemoteMatchEntry{
+		{
+			AppleTrackID:      101,
+			ApplePersistentID: "PID101",
+			Rating:            60,
+			MatchStatus:       report.RemoteMatchStatusMatch,
+			MatchedSongID:     "song1",
+			MatchedPath:       trackPathA,
+		},
+		{
+			AppleTrackID:      102,
+			ApplePersistentID: "PID102",
+			Loved:             true,
+			Rating:            80,
+			MatchStatus:       report.RemoteMatchStatusMatch,
+			MatchedSongID:     "song2",
+			MatchedPath:       trackPathB,
+		},
+		{
+			AppleTrackID:      103,
+			ApplePersistentID: "PID103",
+			Loved:             true,
+			MatchStatus:       report.RemoteMatchStatusMatch,
+			MatchedSongID:     "song3",
+			MatchedPath:       trackPathC,
+		},
+		{
+			AppleTrackID:      104,
+			ApplePersistentID: "PID104",
+			Loved:             true,
+			MatchStatus:       report.RemoteMatchStatusMatch,
+			MatchedSongID:     "song4",
+			MatchedPath:       trackPathDup,
+		},
+		{
+			AppleTrackID:      105,
+			ApplePersistentID: "PID105",
+			Loved:             true,
+			MatchStatus:       report.RemoteMatchStatusMatch,
+			MatchedSongID:     "song5",
+			MatchedPath:       trackPathMissing,
+		},
+		{
+			AppleTrackID:      106,
+			ApplePersistentID: "PID106",
+			Rating:            40,
+			MatchStatus:       report.RemoteMatchStatusLowConfidence,
+			MatchedSongID:     "song6",
+			MatchedPath:       trackPathA,
+		},
 	}
 
 	filtered, summary := buildRemoteActionableReport(entries, localIndex, false)
@@ -117,9 +100,12 @@ func TestBuildRemoteActionableReportFilters(t *testing.T) {
 	if summary.MatchCount != 2 || summary.LowConfidenceCount != 0 {
 		t.Fatalf("unexpected status counts: %+v", summary)
 	}
+	if summary.NoLocalPathHit != 1 || summary.AmbiguousLocalPath != 1 {
+		t.Fatalf("unexpected path counts: %+v", summary)
+	}
 
 	trackIDs := []int{filtered[0].AppleTrackID, filtered[1].AppleTrackID}
-	if !containsTrack(trackIDs, 1) || !containsTrack(trackIDs, 4) {
+	if !containsTrack(trackIDs, 101) || !containsTrack(trackIDs, 103) {
 		t.Fatalf("missing expected track IDs, got %v", trackIDs)
 	}
 
@@ -129,6 +115,19 @@ func TestBuildRemoteActionableReportFilters(t *testing.T) {
 	}
 	if summaryLow.LowConfidenceCount != 1 {
 		t.Fatalf("expected 1 low-confidence row, got %+v", summaryLow)
+	}
+}
+
+func buildAppleTrackInfo(trackID int, location string, rating int, loved bool) appleTrackInfo {
+	return appleTrackInfo{
+		track: itunes.Track{
+			TrackId:      trackID,
+			Location:     location,
+			Rating:       rating,
+			PersistentId: fmt.Sprintf("PID-%d", trackID),
+		},
+		trackType: "File",
+		loved:     loved,
 	}
 }
 

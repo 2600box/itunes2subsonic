@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -11,8 +12,10 @@ import (
 )
 
 type localTrackMeta struct {
-	Loved  bool
-	Rating int
+	Loved        bool
+	Rating       int
+	TrackID      int
+	PersistentID string
 }
 
 type remoteActionableRow struct {
@@ -40,20 +43,31 @@ type remoteActionableSummary struct {
 	LovedAndRated      int
 	MatchCount         int
 	LowConfidenceCount int
+	NoLocalPathHit     int
+	AmbiguousLocalPath int
 }
 
-func buildLocalMetaIndex(appleTracks []appleTrackInfo) map[int]localTrackMeta {
-	index := make(map[int]localTrackMeta, len(appleTracks))
+func buildLocalMetaIndex(appleTracks []appleTrackInfo) map[string][]localTrackMeta {
+	index := make(map[string][]localTrackMeta, len(appleTracks))
 	for _, info := range appleTracks {
-		index[info.track.TrackId] = localTrackMeta{
-			Loved:  info.loved,
-			Rating: info.track.Rating,
+		if info.trackType == "Remote" {
+			continue
 		}
+		normalizedPath, ok := normalizeLocalTrackLocation(info.track.Location)
+		if !ok {
+			continue
+		}
+		index[normalizedPath] = append(index[normalizedPath], localTrackMeta{
+			Loved:        info.loved,
+			Rating:       info.track.Rating,
+			TrackID:      info.track.TrackId,
+			PersistentID: info.track.PersistentId,
+		})
 	}
 	return index
 }
 
-func buildRemoteActionableReport(entries []report.RemoteMatchEntry, localIndex map[int]localTrackMeta, includeLow bool) ([]remoteActionableRow, remoteActionableSummary) {
+func buildRemoteActionableReport(entries []report.RemoteMatchEntry, localIndex map[string][]localTrackMeta, includeLow bool) ([]remoteActionableRow, remoteActionableSummary) {
 	rows := make([]remoteActionableRow, 0)
 	summary := remoteActionableSummary{}
 	for _, entry := range entries {
@@ -65,7 +79,21 @@ func buildRemoteActionableReport(entries []report.RemoteMatchEntry, localIndex m
 		if !hasRemoteLoved && !hasRemoteRating {
 			continue
 		}
-		local := localIndex[entry.AppleTrackID]
+		normalizedPath, ok := normalizeActionableMatchedPath(entry.MatchedPath)
+		if !ok {
+			summary.NoLocalPathHit++
+			continue
+		}
+		localMatches := localIndex[normalizedPath]
+		if len(localMatches) == 0 {
+			summary.NoLocalPathHit++
+			continue
+		}
+		if len(localMatches) > 1 {
+			summary.AmbiguousLocalPath++
+			continue
+		}
+		local := localMatches[0]
 		needsLoved := hasRemoteLoved && !local.Loved
 		needsRating := hasRemoteRating && (local.Rating == 0 || local.Rating != entry.Rating)
 		if !needsLoved && !needsRating {
@@ -105,6 +133,31 @@ func buildRemoteActionableReport(entries []report.RemoteMatchEntry, localIndex m
 		}
 	}
 	return rows, summary
+}
+
+func normalizeActionableMatchedPath(pathValue string) (string, bool) {
+	if strings.TrimSpace(pathValue) == "" {
+		return "", false
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(pathValue))
+	cleaned = normalizeUnicodePath(cleaned)
+	if cleaned == "." {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func normalizeLocalTrackLocation(location string) (string, bool) {
+	parsed := parseLocation(location)
+	if !parsed.ok {
+		return "", false
+	}
+	cleaned := filepath.Clean(parsed.parsed)
+	cleaned = normalizeUnicodePath(cleaned)
+	if cleaned == "." {
+		return "", false
+	}
+	return cleaned, true
 }
 
 func remoteActionableTSVHeader() []string {
