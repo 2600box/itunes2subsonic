@@ -163,7 +163,7 @@ func buildResolvedPreset(name string, p preset, setFlags map[string]bool, cfg ap
 		requireRealPathValue = *p.RequireRealPath
 	}
 	dryRunValue := *dryRun
-	if p.DryRun != nil {
+	if !setFlags["dry_run"] && p.DryRun != nil {
 		dryRunValue = *p.DryRun
 	}
 	debugValue := *debugMode

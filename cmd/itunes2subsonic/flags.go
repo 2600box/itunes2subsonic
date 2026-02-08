@@ -9,3 +9,38 @@ func collectSetFlags() map[string]bool {
 	})
 	return setFlags
 }
+
+func applyDryRunOverrides(setFlags map[string]bool, apply bool) {
+	if !apply {
+		return
+	}
+	setFlags["dry_run"] = true
+	*dryRun = false
+}
+
+func clearReportFlagsForApply(setFlags map[string]bool) {
+	if !setFlags["report_library_stats"] {
+		*reportLibrary = ""
+	}
+	if !setFlags["out_tsv"] {
+		*reportOutTSV = ""
+	}
+	if !setFlags["report_sync_plan"] {
+		*reportSyncPlan = ""
+	}
+	if !setFlags["report_sync_plan_tsv"] {
+		*reportSyncPlanTSV = ""
+	}
+	if !setFlags["report_reconcile"] {
+		*reportReconcile = ""
+	}
+	if !setFlags["report_remote_match_json"] {
+		*reportRemoteMatchJSON = ""
+	}
+	if !setFlags["report_remote_match_tsv"] {
+		*reportRemoteMatchTSV = ""
+	}
+	if !setFlags["report_remote_actionable_tsv"] {
+		*reportRemoteActionable = ""
+	}
+}

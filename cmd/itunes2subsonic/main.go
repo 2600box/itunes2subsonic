@@ -91,7 +91,7 @@ var (
 	remoteMatchLowThreshold = flag.Float64("remote_match_low_threshold", 0.75, "threshold for LOW_CONFIDENCE status in remote match report")
 	remoteMatchDebug        = flag.Bool("remote_match_debug", false, "print debug information for remote match mismatches")
 	verifyFlag              = flag.Bool("verify", false, "run the verify workflow (audit + verify_src_files) and emit a readiness report")
-	applyFlag               = flag.Bool("apply", false, "apply changes (alias for --dry_run=false)")
+	applyFlag               = flag.Bool("apply", false, "apply changes (alias for --dry_run=false, overrides preset dry_run)")
 	maxStaleMissingStars    = flag.Int("max_stale_missing_on_disk_stars", 0, "max stale_missing_on_disk allowed for stars before NO-GO")
 	maxStaleMissingRatings  = flag.Int("max_stale_missing_on_disk_ratings", 0, "max stale_missing_on_disk allowed for ratings before NO-GO")
 	maxStaleMissingPlays    = flag.Int("max_stale_missing_on_disk_playcounts", 0, "max stale_missing_on_disk allowed for playcounts before NO-GO")
@@ -1612,6 +1612,7 @@ func main() {
 		return
 	}
 	setFlags := collectSetFlags()
+	applyDryRunOverrides(setFlags, *applyFlag)
 	cfg := loadConfig()
 	var presetConfig preset
 	if *presetName != "" || *dumpPreset {
@@ -1651,8 +1652,8 @@ func main() {
 		*verifySrcFiles = true
 		*dryRun = true
 	}
-	if *applyFlag {
-		*dryRun = false
+	if !*dryRun {
+		clearReportFlagsForApply(setFlags)
 	}
 	filterActive := *filterAlbum != "" || *filterArtist != "" || *filterName != "" || *filterPath != "" || *limitTracks > 0
 	var logFileHandle *os.File
@@ -1697,7 +1698,9 @@ func main() {
 		if err := runReportLibraryStats(*itunesXml, filters, *reportLibrary, *reportOutTSV); err != nil {
 			log.Fatalf("Failed to report library stats: %s", err)
 		}
-		return
+		if *dryRun {
+			return
+		}
 	}
 	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), presetConfig.SubsonicUser, cfg.SubsonicUser)
 	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), presetConfig.SubsonicPass, cfg.SubsonicPass)
@@ -2025,19 +2028,24 @@ func main() {
 			if _, err := runRemoteMatchReport(appleTracks, navidromeSongs, paths, cfg, *remoteMatchDebug); err != nil {
 				log.Fatalf("Failed to write remote match report: %s", err)
 			}
-			return
-		}
-		if *reportSyncPlan != "" {
-			if err := runReportSyncPlan(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly); err != nil {
-				log.Fatalf("Failed to report sync plan: %s", err)
+			if *dryRun {
+				return
+			}
+		} else {
+			if *reportSyncPlan != "" {
+				if err := runReportSyncPlan(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly); err != nil {
+					log.Fatalf("Failed to report sync plan: %s", err)
+				}
+			}
+			if *reportReconcile != "" {
+				if err := runReportReconcile(*itunesXml, *reportSyncPlan, *reportReconcile, filters, *allowReconcileMismatch); err != nil {
+					log.Fatalf("Failed to report reconcile summary: %s", err)
+				}
+			}
+			if *dryRun {
+				return
 			}
 		}
-		if *reportReconcile != "" {
-			if err := runReportReconcile(*itunesXml, *reportSyncPlan, *reportReconcile, filters, *allowReconcileMismatch); err != nil {
-				log.Fatalf("Failed to report reconcile summary: %s", err)
-			}
-		}
-		return
 	}
 
 	if !*dryRun {
