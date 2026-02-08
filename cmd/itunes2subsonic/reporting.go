@@ -982,7 +982,9 @@ func runReportSyncPlan(c *subsonic.Client, itunesXML string, planPath string, fi
 		return err
 	}
 	printPlanSummary(stats, plan)
-	printDryRunSummary(stats, plan)
+	if *dryRun {
+		printDryRunSummary(stats, plan)
+	}
 	return writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, *reportSyncPlanTSV)
 }
 
@@ -999,7 +1001,9 @@ func runReportSyncPlanWithData(c *subsonic.Client, itunesXML string, planPath st
 		return emptySyncPlanWithDataResult(err)
 	}
 	printPlanSummary(stats, plan)
-	printDryRunSummary(stats, plan)
+	if *dryRun {
+		printDryRunSummary(stats, plan)
+	}
 	if err := writeSyncPlanArtifacts(planPath, plan, selectedMatchMode, planTSVBase); err != nil {
 		return emptySyncPlanWithDataResult(err)
 	}
