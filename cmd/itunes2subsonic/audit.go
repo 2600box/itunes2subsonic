@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,8 +18,10 @@ import (
 )
 
 type auditRemoteMatchPaths struct {
-	jsonPath string
-	tsvPath  string
+	jsonPath       string
+	tsvPath        string
+	actionableTSV  string
+	includeLowConf bool
 }
 
 type auditResult struct {
@@ -104,7 +107,7 @@ func runAudit(c *subsonic.Client, itunesXML string, filters filterOptions, allow
 	}
 
 	var remoteSummary *report.RemoteMatchSummary
-	if remoteMatchPaths.jsonPath != "" || remoteMatchPaths.tsvPath != "" || remoteMatchDebug {
+	if remoteMatchPaths.jsonPath != "" || remoteMatchPaths.tsvPath != "" || remoteMatchPaths.actionableTSV != "" || remoteMatchDebug {
 		remoteReport, err := runRemoteMatchReport(appleTracks, navidromeSongs, remoteMatchPaths, remoteMatchConfig, remoteMatchDebug)
 		if err != nil {
 			return auditResult{}, err
@@ -538,7 +541,7 @@ func formatReasonCounts(counts map[string]int) string {
 }
 
 func runRemoteMatchReport(appleTracks []appleTrackInfo, navidromeSongs []navidromeSong, paths auditRemoteMatchPaths, cfg pkgreport.RemoteMatchConfig, debug bool) (report.RemoteMatchReport, error) {
-	if paths.jsonPath == "" && paths.tsvPath == "" && !debug {
+	if paths.jsonPath == "" && paths.tsvPath == "" && paths.actionableTSV == "" && !debug {
 		return report.RemoteMatchReport{}, nil
 	}
 	remoteTracks := make([]pkgreport.RemoteTrackInput, 0)
@@ -580,6 +583,21 @@ func runRemoteMatchReport(appleTracks []appleTrackInfo, navidromeSongs []navidro
 		if err := report.WriteTSV(paths.tsvPath, pkgreport.TSVHeaderRemoteMatch(), rows); err != nil {
 			return report.RemoteMatchReport{}, err
 		}
+	}
+	if paths.actionableTSV != "" {
+		localIndex := buildLocalMetaIndex(appleTracks)
+		rows, summary := buildRemoteActionableReport(result.Report.Entries, localIndex, paths.includeLowConf)
+		if err := report.WriteTSV(paths.actionableTSV, remoteActionableTSVHeader(), remoteActionableTSVRows(rows)); err != nil {
+			return report.RemoteMatchReport{}, err
+		}
+		log.Printf("Remote actionable: total=%d loved_only=%d rated_only=%d loved_and_rated=%d; by_status MATCH=%d LOW_CONFIDENCE=%d",
+			summary.Total,
+			summary.LovedOnly,
+			summary.RatedOnly,
+			summary.LovedAndRated,
+			summary.MatchCount,
+			summary.LowConfidenceCount,
+		)
 	}
 	if debug {
 		printRemoteMatchDebug(result.Report)

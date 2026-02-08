@@ -68,6 +68,8 @@ var (
 	reportOutTSV            = flag.String("out_tsv", "", "write a TSV summary when reporting library stats")
 	reportRemoteMatchJSON   = flag.String("report_remote_match_json", "", "write remote loved/rated match report to JSON (empty disables)")
 	reportRemoteMatchTSV    = flag.String("report_remote_match_tsv", "", "write remote loved/rated match report to TSV (empty disables)")
+	reportRemoteActionable  = flag.String("report_remote_actionable_tsv", "", "write actionable remote loved/rated matches to TSV (empty disables)")
+	remoteActionableInclude = flag.Bool("remote_actionable_include_low_confidence", false, "include LOW_CONFIDENCE matches in actionable remote report")
 	reportOnly              = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
 	subsonicClient          = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
 	requireRealPath         = flag.Bool("require_real_path", true, "fail fast if Navidrome returns virtual/tag paths instead of real paths")
@@ -1703,7 +1705,7 @@ func main() {
 		*subsonicUrl = cfg.SubsonicURL
 	}
 
-	requiresNonInteractive := *auditFlag || *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != ""
+	requiresNonInteractive := *auditFlag || *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != ""
 	if requiresNonInteractive {
 		missing := make([]string, 0)
 		if *subsonicUrl == "" {
@@ -1787,7 +1789,7 @@ func main() {
 	notInNavidromeByDir := make(map[string]int)
 	var derivedMusicRoot string
 	var derivedMusicRootSource string
-	needsLocalScan := !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == ""
+	needsLocalScan := !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == "" && *reportRemoteActionable == ""
 	if needsLocalScan && *itunesXml != "" {
 		f, err := os.Open(*itunesXml)
 		defer f.Close()
@@ -1942,8 +1944,10 @@ func main() {
 
 	if *auditFlag {
 		paths := auditRemoteMatchPaths{
-			jsonPath: *reportRemoteMatchJSON,
-			tsvPath:  *reportRemoteMatchTSV,
+			jsonPath:       *reportRemoteMatchJSON,
+			tsvPath:        *reportRemoteMatchTSV,
+			actionableTSV:  *reportRemoteActionable,
+			includeLowConf: *remoteActionableInclude,
 		}
 		cfg := pkgreport.RemoteMatchConfig{
 			TopN:         *remoteMatchTopN,
@@ -1986,7 +1990,7 @@ func main() {
 		return
 	}
 
-	if *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" {
+	if *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != "" {
 		filters := filterOptions{
 			album:  *filterAlbum,
 			artist: *filterArtist,
@@ -1994,9 +1998,9 @@ func main() {
 			path:   *filterPath,
 			limit:  *limitTracks,
 		}
-		if *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" {
+		if *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != "" {
 			if *reportSyncPlan == "" {
-				log.Fatalf("--report_remote_match_* requires --report_sync_plan (or use --audit)")
+				log.Fatalf("--report_remote_match_* and --report_remote_actionable_tsv require --report_sync_plan (or use --audit)")
 			}
 			_, _, navidromeSongs, appleTracks, err := runReportSyncPlanWithData(c, *itunesXml, *reportSyncPlan, filters, allowlist, selectedMatchMode, filterActive, *reportOnly, *reportSyncPlanTSV)
 			if err != nil {
@@ -2008,8 +2012,10 @@ func main() {
 				}
 			}
 			paths := auditRemoteMatchPaths{
-				jsonPath: *reportRemoteMatchJSON,
-				tsvPath:  *reportRemoteMatchTSV,
+				jsonPath:       *reportRemoteMatchJSON,
+				tsvPath:        *reportRemoteMatchTSV,
+				actionableTSV:  *reportRemoteActionable,
+				includeLowConf: *remoteActionableInclude,
 			}
 			cfg := pkgreport.RemoteMatchConfig{
 				TopN:         *remoteMatchTopN,

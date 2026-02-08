@@ -37,6 +37,7 @@ type preset struct {
 	ReportOutTSV          string `json:"out_tsv" yaml:"out_tsv"`
 	ReportRemoteMatchJSON string `json:"report_remote_match_json" yaml:"report_remote_match_json"`
 	ReportRemoteMatchTSV  string `json:"report_remote_match_tsv" yaml:"report_remote_match_tsv"`
+	ReportRemoteActionTSV string `json:"report_remote_actionable_tsv" yaml:"report_remote_actionable_tsv"`
 }
 
 type resolvedPreset struct {
@@ -63,6 +64,7 @@ type resolvedPreset struct {
 	ReportOutTSV          string            `json:"out_tsv"`
 	ReportRemoteMatchJSON string            `json:"report_remote_match_json"`
 	ReportRemoteMatchTSV  string            `json:"report_remote_match_tsv"`
+	ReportRemoteActionTSV string            `json:"report_remote_actionable_tsv"`
 	Sources               map[string]string `json:"sources"`
 }
 
@@ -150,6 +152,9 @@ func applyPreset(p preset, setFlags map[string]bool) {
 	if !setFlags["report_remote_match_tsv"] && p.ReportRemoteMatchTSV != "" {
 		*reportRemoteMatchTSV = p.ReportRemoteMatchTSV
 	}
+	if !setFlags["report_remote_actionable_tsv"] && p.ReportRemoteActionTSV != "" {
+		*reportRemoteActionable = p.ReportRemoteActionTSV
+	}
 }
 
 func buildResolvedPreset(name string, p preset, setFlags map[string]bool, cfg appConfig) resolvedPreset {
@@ -196,6 +201,7 @@ func buildResolvedPreset(name string, p preset, setFlags map[string]bool, cfg ap
 		ReportOutTSV:          *reportOutTSV,
 		ReportRemoteMatchJSON: *reportRemoteMatchJSON,
 		ReportRemoteMatchTSV:  *reportRemoteMatchTSV,
+		ReportRemoteActionTSV: *reportRemoteActionable,
 		Sources:               sources,
 	}
 }
@@ -222,6 +228,7 @@ func presetSourceMap(p preset, setFlags map[string]bool, cfg appConfig) map[stri
 	sources["out_tsv"] = sourceForString("out_tsv", setFlags, p.ReportOutTSV, "")
 	sources["report_remote_match_json"] = sourceForString("report_remote_match_json", setFlags, p.ReportRemoteMatchJSON, "")
 	sources["report_remote_match_tsv"] = sourceForString("report_remote_match_tsv", setFlags, p.ReportRemoteMatchTSV, "")
+	sources["report_remote_actionable_tsv"] = sourceForString("report_remote_actionable_tsv", setFlags, p.ReportRemoteActionTSV, "")
 	sources["subsonic_user"] = sourceForSecret("SUBSONIC_USER", p.SubsonicUser, cfg.SubsonicUser)
 	sources["subsonic_pass"] = sourceForSecret("SUBSONIC_PASS", p.SubsonicPass, cfg.SubsonicPass)
 	return sources
@@ -292,6 +299,7 @@ func checkPresetPlaceholders(p preset, setFlags map[string]bool, cfg appConfig) 
 	check("report_reconcile", "report_reconcile", p.ReportReconcile)
 	check("report_remote_match_json", "report_remote_match_json", p.ReportRemoteMatchJSON)
 	check("report_remote_match_tsv", "report_remote_match_tsv", p.ReportRemoteMatchTSV)
+	check("report_remote_actionable_tsv", "report_remote_actionable_tsv", p.ReportRemoteActionTSV)
 
 	if !setFlags["subsonic"] {
 		value := firstNonEmpty(p.SubsonicURL, cfg.SubsonicURL)
