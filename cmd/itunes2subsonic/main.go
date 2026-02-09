@@ -69,6 +69,7 @@ var (
 	reportRemoteMatchJSON   = flag.String("report_remote_match_json", "", "write remote loved/rated match report to JSON (empty disables)")
 	reportRemoteMatchTSV    = flag.String("report_remote_match_tsv", "", "write remote loved/rated match report to TSV (empty disables)")
 	reportRemoteActionable  = flag.String("report_remote_actionable_tsv", "", "write actionable remote loved/rated matches to TSV (empty disables)")
+	reportRemoteStreaming   = flag.String("report_remote_streaming_gaps", "", "write remote streaming gaps report to the provided directory (empty disables)")
 	remoteActionableInclude = flag.Bool("remote_actionable_include_low_confidence", false, "include LOW_CONFIDENCE matches in actionable remote report")
 	reportOnly              = flag.Bool("report_only", false, "avoid fetching the full Navidrome song list when filters are active (requires --navidrome_dump)")
 	subsonicClient          = flag.String("subsonic_client", "itunes2subsonic", "Subsonic client identifier (c=) to use when connecting")
@@ -108,14 +109,18 @@ var (
 )
 
 type subsonicInfo struct {
-	id        string
-	path      string
-	rating    int
-	playCount int64
-	starred   bool
-	title     string
-	artist    string
-	album     string
+	id              string
+	path            string
+	rating          int
+	playCount       int64
+	starred         bool
+	title           string
+	artist          string
+	album           string
+	trackNumber     int
+	discNumber      int
+	durationSeconds int
+	year            int
 }
 
 func (s subsonicInfo) Id() string          { return s.id }
@@ -362,14 +367,18 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 
 		for _, s := range songs.Song {
 			tracks = append(tracks, subsonicInfo{
-				id:        s.ID,
-				path:      s.Path,
-				rating:    s.UserRating,
-				playCount: s.PlayCount,
-				starred:   false,
-				title:     s.Title,
-				artist:    s.Artist,
-				album:     s.Album,
+				id:              s.ID,
+				path:            s.Path,
+				rating:          s.UserRating,
+				playCount:       s.PlayCount,
+				starred:         false,
+				title:           s.Title,
+				artist:          s.Artist,
+				album:           s.Album,
+				trackNumber:     s.Track,
+				discNumber:      s.DiscNumber,
+				durationSeconds: s.Duration,
+				year:            s.Year,
 			})
 		}
 
@@ -385,17 +394,22 @@ func fetchSubsonicSongs(c *subsonic.Client, bar *pb.ProgressBar) ([]subsonicInfo
 }
 
 type navidromeDumpEntry struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
-	RawPath     string `json:"raw_path"`
-	DecodedPath string `json:"decoded_path"`
-	CleanPath   string `json:"clean_path"`
-	MatchPath   string `json:"match_path"`
-	Title       string `json:"title,omitempty"`
-	Artist      string `json:"artist,omitempty"`
-	Album       string `json:"album,omitempty"`
-	Rating      int    `json:"rating,omitempty"`
-	PlayCount   int64  `json:"play_count,omitempty"`
+	ID              string `json:"id"`
+	Path            string `json:"path"`
+	RawPath         string `json:"raw_path"`
+	DecodedPath     string `json:"decoded_path"`
+	CleanPath       string `json:"clean_path"`
+	MatchPath       string `json:"match_path"`
+	Title           string `json:"title,omitempty"`
+	Artist          string `json:"artist,omitempty"`
+	Album           string `json:"album,omitempty"`
+	Rating          int    `json:"rating,omitempty"`
+	PlayCount       int64  `json:"play_count,omitempty"`
+	Starred         bool   `json:"starred,omitempty"`
+	TrackNumber     int    `json:"track_number,omitempty"`
+	DiscNumber      int    `json:"disc_number,omitempty"`
+	DurationSeconds int    `json:"duration_seconds,omitempty"`
+	Year            int    `json:"year,omitempty"`
 }
 
 func writeNavidromeDump(path string, songs []subsonicInfo, root string, mode matchModeValue) error {
@@ -408,17 +422,22 @@ func writeNavidromeDump(path string, songs []subsonicInfo, root string, mode mat
 			log.Printf("Navidrome dump debug for %s: raw=%q decoded=%q clean=%q normalised=%q", song.Id(), song.Path(), decoded, cleaned, matchPath)
 		}
 		entries = append(entries, navidromeDumpEntry{
-			ID:          song.Id(),
-			Path:        song.Path(),
-			RawPath:     song.Path(),
-			DecodedPath: decoded,
-			CleanPath:   cleaned,
-			MatchPath:   matchPath,
-			Title:       song.title,
-			Artist:      song.artist,
-			Album:       song.album,
-			Rating:      song.rating,
-			PlayCount:   song.playCount,
+			ID:              song.Id(),
+			Path:            song.Path(),
+			RawPath:         song.Path(),
+			DecodedPath:     decoded,
+			CleanPath:       cleaned,
+			MatchPath:       matchPath,
+			Title:           song.title,
+			Artist:          song.artist,
+			Album:           song.album,
+			Rating:          song.rating,
+			PlayCount:       song.playCount,
+			Starred:         song.starred,
+			TrackNumber:     song.trackNumber,
+			DiscNumber:      song.discNumber,
+			DurationSeconds: song.durationSeconds,
+			Year:            song.year,
 		})
 	}
 	payload, err := json.MarshalIndent(entries, "", "  ")
@@ -1702,13 +1721,22 @@ func main() {
 			return
 		}
 	}
+	if *reportRemoteStreaming != "" && *dumpFile != "" && !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == "" && *reportRemoteActionable == "" {
+		if !*dryRun {
+			log.Fatal("--report_remote_streaming_gaps is read-only; use --dry_run=true")
+		}
+		if err := runReportRemoteStreamingGaps(nil, *itunesXml, *dumpFile, *reportRemoteStreaming); err != nil {
+			log.Fatalf("Failed to write remote streaming gaps report: %s", err)
+		}
+		return
+	}
 	subsonicUser := firstNonEmpty(os.Getenv("SUBSONIC_USER"), presetConfig.SubsonicUser, cfg.SubsonicUser)
 	subsonicPass := firstNonEmpty(os.Getenv("SUBSONIC_PASS"), presetConfig.SubsonicPass, cfg.SubsonicPass)
 	if *subsonicUrl == "" {
 		*subsonicUrl = cfg.SubsonicURL
 	}
 
-	requiresNonInteractive := *auditFlag || *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != ""
+	requiresNonInteractive := *auditFlag || *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != "" || (*reportRemoteStreaming != "" && *dumpFile == "")
 	if requiresNonInteractive {
 		missing := make([]string, 0)
 		if *subsonicUrl == "" {
@@ -1792,7 +1820,7 @@ func main() {
 	notInNavidromeByDir := make(map[string]int)
 	var derivedMusicRoot string
 	var derivedMusicRootSource string
-	needsLocalScan := !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == "" && *reportRemoteActionable == ""
+	needsLocalScan := !*auditFlag && *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == "" && *reportRemoteActionable == "" && *reportRemoteStreaming == ""
 	if needsLocalScan && *itunesXml != "" {
 		f, err := os.Open(*itunesXml)
 		defer f.Close()
@@ -1991,6 +2019,18 @@ func main() {
 			}
 		}
 		return
+	}
+
+	if *reportRemoteStreaming != "" {
+		if !*dryRun {
+			log.Fatal("--report_remote_streaming_gaps is read-only; use --dry_run=true")
+		}
+		if err := runReportRemoteStreamingGaps(c, *itunesXml, *dumpFile, *reportRemoteStreaming); err != nil {
+			log.Fatalf("Failed to write remote streaming gaps report: %s", err)
+		}
+		if *reportSyncPlan == "" && *reportReconcile == "" && *reportRemoteMatchJSON == "" && *reportRemoteMatchTSV == "" && *reportRemoteActionable == "" {
+			return
+		}
 	}
 
 	if *reportSyncPlan != "" || *reportReconcile != "" || *reportRemoteMatchJSON != "" || *reportRemoteMatchTSV != "" || *reportRemoteActionable != "" {
