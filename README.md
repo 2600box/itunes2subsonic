@@ -45,6 +45,7 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--out_tsv` (default: empty): Write a TSV summary when reporting library stats.
 * `--report_remote_match_json` (default: empty): Write remote loved/rated fuzzy match report to JSON.
 * `--report_remote_match_tsv` (default: empty): Write remote loved/rated fuzzy match report to TSV.
+* `--report_remote_streaming_gaps` (default: empty): Write remote streaming loved/rated gap reports to the provided directory.
 * `--report_only` (default: false): Avoid fetching the full Navidrome song list when filters are active (requires `--navidrome_dump`).
 * `--allow_unstar` (default: false): Allow unstar operations when `--dry_run=false`.
 * `--allow_reconcile_mismatch` (default: false): Allow reconcile invariant mismatches (writes report, exits 0).
@@ -204,6 +205,21 @@ The remote match report classifies each remote track as:
 * `NO_MATCH` (below low threshold)
 
 LOW_CONFIDENCE entries are also summarized in the report for manual review.
+
+### Remote streaming gaps report
+
+To identify Apple Music remote streaming tracks that are loved/rated but missing or mismatched in Navidrome:
+
+```sh
+$ RUN_DIR="run/20240101T120000"
+$ go run ./cmd/itunes2subsonic \\
+  --itunes_xml Library.xml \\
+  --navidrome_dump "$RUN_DIR/navidrome_dump.json" \\
+  --report_remote_streaming_gaps "$RUN_DIR" \\
+  --dry_run=true
+```
+
+This report is read-only. It writes `remote_streaming_gaps.tsv`, review subsets, and JSON summaries into the chosen directory.
 
 ### Missing reports
 

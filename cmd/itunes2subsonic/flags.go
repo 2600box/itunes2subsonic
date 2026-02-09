@@ -43,4 +43,7 @@ func clearReportFlagsForApply(setFlags map[string]bool) {
 	if !setFlags["report_remote_actionable_tsv"] {
 		*reportRemoteActionable = ""
 	}
+	if !setFlags["report_remote_streaming_gaps"] {
+		*reportRemoteStreaming = ""
+	}
 }
