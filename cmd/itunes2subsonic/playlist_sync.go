@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -135,16 +136,45 @@ func updatePlaylistBatched(request func(endpoint string, params url.Values) erro
 		return errMissingPlaylistID
 	}
 	for _, chunk := range batchIDs(ids, batchSize) {
-		params := url.Values{}
-		params.Add("playlistId", playlistID)
-		for _, id := range chunk {
-			params.Add("songIdToAdd", id)
-		}
+		params := buildUpdatePlaylistParams(playlistID, chunk, nil)
 		if err := request("updatePlaylist", params); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Navidrome requires deletePlaylist to receive `id`, while updatePlaylist uses `playlistId`.
+func buildDeletePlaylistParams(playlistID string) url.Values {
+	params := url.Values{}
+	params.Add("id", playlistID)
+	return params
+}
+
+// Navidrome updatePlaylist requires `playlistId` plus one or more songIdToAdd/songIdToRemove values.
+func buildUpdatePlaylistParams(playlistID string, songIDsToAdd []string, songIDsToRemove []string) url.Values {
+	params := url.Values{}
+	params.Add("playlistId", playlistID)
+	for _, id := range songIDsToAdd {
+		params.Add("songIdToAdd", id)
+	}
+	for _, id := range songIDsToRemove {
+		params.Add("songIdToRemove", id)
+	}
+	return params
+}
+
+func playlistQueryKeys(params url.Values) []string {
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func logPlaylistRequest(endpoint string, playlistName string, playlistID string, params url.Values) {
+	fmt.Fprintf(stderrWriter, "Playlist API request endpoint=%s playlist=%q playlistID=%q queryKeys=%v\n", endpoint, playlistName, playlistID, playlistQueryKeys(params))
 }
 
 func findPlaylistIDByName(playlists []*subsonic.Playlist, name string) (string, int) {
@@ -183,6 +213,7 @@ func ensurePlaylistID(c *subsonic.Client, name string) (string, error) {
 	if err := withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
 		createParams := url.Values{}
 		createParams.Add("name", name)
+		logPlaylistRequest("createPlaylist", name, "", createParams)
 		return subsonicRequest(c, "createPlaylist", createParams)
 	}); err != nil {
 		return "", fmt.Errorf("create playlist: %w", err)
