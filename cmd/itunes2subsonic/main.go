@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ var (
 	updatePlay              = flag.Bool("update_played", true, "update play count and last played time")
 	syncStarred             = flag.Bool("sync_starred", true, "sync Apple Music favourited/loved tracks to Navidrome starred")
 	syncPlaylist            = flag.Bool("sync_playlists", true, "sync Apple Music playlists to Navidrome")
+	playlistBatchSize       = flag.Int("playlist_batch_size", 250, "number of songs per updatePlaylist request when syncing playlists")
 	maxScrobbles            = flag.Int("max_scrobbles", 250, "maximum scrobbles per track when syncing play counts")
 	createdFile             = flag.String("created_file", "", "a file to write SQL statements to update the created time")
 	itunesRoot              = flag.String("itunes_root", "", "(optional) library prefix for Apple Music content")
@@ -555,6 +557,9 @@ func subsonicRequest(c *subsonic.Client, endpoint string, params url.Values) err
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return &httpStatusError{StatusCode: resp.StatusCode}
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -566,7 +571,7 @@ func subsonicRequest(c *subsonic.Client, endpoint string, params url.Values) err
 		return err
 	}
 	if parsed.Error != nil {
-		return fmt.Errorf("Error #%d: %s", parsed.Error.Code, parsed.Error.Message)
+		return &subsonicAPIError{Code: parsed.Error.Code, Message: parsed.Error.Message}
 	}
 	return nil
 }
@@ -2686,10 +2691,26 @@ func main() {
 			playlistCount++
 		}
 		fmt.Fprintf(stdoutWriter, "== Sync %d Playlists ==\n", playlistCount)
+		batchSize := *playlistBatchSize
+		if batchSize <= 0 {
+			batchSize = 250
+		}
+		failureDir := *runDir
+		if failureDir == "" {
+			failureDir = runDirFromLogFile()
+		}
+		failurePath := filepath.Join(failureDir, "playlist_failures.tsv")
 		if *dryRun {
 			fmt.Fprintf(stdoutWriter, "Set --dry_run=false to modify %s\n", *subsonicUrl)
+			if err := os.MkdirAll(failureDir, 0o755); err != nil {
+				log.Fatalf("Failed creating playlist failure directory: %s", err)
+			}
+			if err := writePlaylistFailuresTSV(failurePath, nil); err != nil {
+				log.Fatalf("Failed writing playlist failures report: %s", err)
+			}
 		} else {
 			skip := 0
+			failures := make([]playlistFailure, 0)
 			bar := i2s.PbWithOptions(pb.Default(playlistCount, "sync playlists"))
 			for _, playlist := range playlistRefs {
 				if playlist.Master || playlist.Name == "" {
@@ -2713,51 +2734,78 @@ func main() {
 					continue
 				}
 
+				intendedOp := "create_and_add_batches"
+				removes := 0
 				if existing, ok := playlistsByName[playlist.Name]; ok {
-					removeParams := url.Values{}
-					for i := 0; i < int(existing.SongCount); i++ {
-						removeParams.Add("songIndexToRemove", strconv.Itoa(i))
-					}
-					if len(removeParams) > 0 {
-						if err := subsonicRequest(c, "updatePlaylist", removeParams); err != nil {
-							fmt.Fprintf(stderrWriter, "Error clearing playlist '%s': %s\n", playlist.Name, err)
-							skip++
-							if *skipCount > 0 && skip > *skipCount {
-								log.Fatalf("Too many skipped tracks. Failing out...")
-							}
-							bar.Add(1)
-							continue
-						}
-					}
-					addParams := url.Values{}
-					addParams.Add("playlistId", existing.ID)
-					for _, id := range trackIDs {
-						addParams.Add("songIdToAdd", id)
-					}
-					if err := subsonicRequest(c, "updatePlaylist", addParams); err != nil {
-						fmt.Fprintf(stderrWriter, "Error updating playlist '%s': %s\n", playlist.Name, err)
+					intendedOp = "recreate_and_add_batches"
+					removes = int(existing.SongCount)
+					if strings.TrimSpace(existing.ID) == "" {
+						err := errMissingPlaylistID
+						fmt.Fprintf(stderrWriter, "Error syncing playlist '%s': adds=%d removes=%d playlistId_available=false err=%s\n", playlist.Name, len(trackIDs), removes, err)
+						failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
 						}
+						bar.Add(1)
+						continue
 					}
-				} else {
-					createParams := url.Values{}
-					createParams.Add("name", playlist.Name)
-					for _, id := range trackIDs {
-						createParams.Add("songId", id)
-					}
-					if err := subsonicRequest(c, "createPlaylist", createParams); err != nil {
-						fmt.Fprintf(stderrWriter, "Error creating playlist '%s': %s\n", playlist.Name, err)
+					err := withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
+						deleteParams := url.Values{}
+						deleteParams.Add("playlistId", existing.ID)
+						return subsonicRequest(c, "deletePlaylist", deleteParams)
+					})
+					if err != nil {
+						fmt.Fprintf(stderrWriter, "Error recreating playlist '%s': adds=%d removes=%d playlistId_available=true err=%s\n", playlist.Name, len(trackIDs), removes, err)
+						failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
 						skip++
 						if *skipCount > 0 && skip > *skipCount {
 							log.Fatalf("Too many skipped tracks. Failing out...")
 						}
+						bar.Add(1)
+						continue
 					}
+				}
+
+				playlistID, err := ensurePlaylistID(c, playlist.Name)
+				if err != nil || strings.TrimSpace(playlistID) == "" {
+					if err == nil {
+						err = errors.New("playlist_not_found")
+					}
+					fmt.Fprintf(stderrWriter, "Error ensuring playlist '%s': adds=%d removes=%d playlistId_available=false err=%s\n", playlist.Name, len(trackIDs), removes, err)
+					failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
+					skip++
+					if *skipCount > 0 && skip > *skipCount {
+						log.Fatalf("Too many skipped tracks. Failing out...")
+					}
+					bar.Add(1)
+					continue
+				}
+
+				err = updatePlaylistBatched(func(endpoint string, params url.Values) error {
+					return withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
+						return subsonicRequest(c, endpoint, params)
+					})
+				}, playlistID, trackIDs, batchSize)
+				if err != nil {
+					fmt.Fprintf(stderrWriter, "Error updating playlist '%s': adds=%d removes=%d playlistId_available=true err=%s\n", playlist.Name, len(trackIDs), removes, err)
+					failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
+					skip++
+					if *skipCount > 0 && skip > *skipCount {
+						log.Fatalf("Too many skipped tracks. Failing out...")
+					}
+					bar.Add(1)
+					continue
 				}
 				bar.Add(1)
 			}
 			bar.Finish()
+			if err := os.MkdirAll(failureDir, 0o755); err != nil {
+				log.Fatalf("Failed creating playlist failure directory: %s", err)
+			}
+			if err := writePlaylistFailuresTSV(failurePath, failures); err != nil {
+				log.Fatalf("Failed writing playlist failures report: %s", err)
+			}
 		}
 	}
 	//
