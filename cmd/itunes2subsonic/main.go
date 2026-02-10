@@ -2709,7 +2709,7 @@ func main() {
 				log.Fatalf("Failed writing playlist failures report: %s", err)
 			}
 		} else {
-			skip := 0
+			playlistFailures := 0
 			failures := make([]playlistFailure, 0)
 			bar := i2s.PbWithOptions(pb.Default(playlistCount, "sync playlists"))
 			for _, playlist := range playlistRefs {
@@ -2743,24 +2743,24 @@ func main() {
 						err := errMissingPlaylistID
 						fmt.Fprintf(stderrWriter, "Error syncing playlist '%s': adds=%d removes=%d playlistId_available=false err=%s\n", playlist.Name, len(trackIDs), removes, err)
 						failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
-						skip++
-						if *skipCount > 0 && skip > *skipCount {
-							log.Fatalf("Too many skipped tracks. Failing out...")
+						playlistFailures++
+						if *skipCount > 0 && playlistFailures > *skipCount {
+							log.Fatalf("Too many playlist failures while syncing playlists. Failing out...")
 						}
 						bar.Add(1)
 						continue
 					}
 					err := withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
-						deleteParams := url.Values{}
-						deleteParams.Add("playlistId", existing.ID)
+						deleteParams := buildDeletePlaylistParams(existing.ID)
+						logPlaylistRequest("deletePlaylist", playlist.Name, existing.ID, deleteParams)
 						return subsonicRequest(c, "deletePlaylist", deleteParams)
 					})
 					if err != nil {
 						fmt.Fprintf(stderrWriter, "Error recreating playlist '%s': adds=%d removes=%d playlistId_available=true err=%s\n", playlist.Name, len(trackIDs), removes, err)
 						failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
-						skip++
-						if *skipCount > 0 && skip > *skipCount {
-							log.Fatalf("Too many skipped tracks. Failing out...")
+						playlistFailures++
+						if *skipCount > 0 && playlistFailures > *skipCount {
+							log.Fatalf("Too many playlist failures while syncing playlists. Failing out...")
 						}
 						bar.Add(1)
 						continue
@@ -2774,9 +2774,9 @@ func main() {
 					}
 					fmt.Fprintf(stderrWriter, "Error ensuring playlist '%s': adds=%d removes=%d playlistId_available=false err=%s\n", playlist.Name, len(trackIDs), removes, err)
 					failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
-					skip++
-					if *skipCount > 0 && skip > *skipCount {
-						log.Fatalf("Too many skipped tracks. Failing out...")
+					playlistFailures++
+					if *skipCount > 0 && playlistFailures > *skipCount {
+						log.Fatalf("Too many playlist failures while syncing playlists. Failing out...")
 					}
 					bar.Add(1)
 					continue
@@ -2784,15 +2784,16 @@ func main() {
 
 				err = updatePlaylistBatched(func(endpoint string, params url.Values) error {
 					return withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
+						logPlaylistRequest(endpoint, playlist.Name, playlistID, params)
 						return subsonicRequest(c, endpoint, params)
 					})
 				}, playlistID, trackIDs, batchSize)
 				if err != nil {
 					fmt.Fprintf(stderrWriter, "Error updating playlist '%s': adds=%d removes=%d playlistId_available=true err=%s\n", playlist.Name, len(trackIDs), removes, err)
 					failures = append(failures, playlistFailure{Name: playlist.Name, IntendedOp: intendedOp, Adds: len(trackIDs), Removes: removes, BatchSize: batchSize, Category: categorizePlaylistError(err), ErrorMessage: err.Error()})
-					skip++
-					if *skipCount > 0 && skip > *skipCount {
-						log.Fatalf("Too many skipped tracks. Failing out...")
+					playlistFailures++
+					if *skipCount > 0 && playlistFailures > *skipCount {
+						log.Fatalf("Too many playlist failures while syncing playlists. Failing out...")
 					}
 					bar.Add(1)
 					continue

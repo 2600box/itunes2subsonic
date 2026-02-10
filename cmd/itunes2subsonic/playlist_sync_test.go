@@ -89,3 +89,26 @@ func TestWithRetryOnlyRetriesTransientErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildDeletePlaylistParamsUsesIDKey(t *testing.T) {
+	params := buildDeletePlaylistParams("playlist-123")
+	if params.Get("id") != "playlist-123" {
+		t.Fatalf("expected id to be set")
+	}
+	if params.Get("playlistId") != "" {
+		t.Fatalf("did not expect playlistId key for deletePlaylist")
+	}
+}
+
+func TestBuildUpdatePlaylistParamsUsesPlaylistIDKey(t *testing.T) {
+	params := buildUpdatePlaylistParams("playlist-123", []string{"song-1"}, []string{"song-2"})
+	if params.Get("playlistId") != "playlist-123" {
+		t.Fatalf("expected playlistId to be set")
+	}
+	if got := params["songIdToAdd"]; len(got) != 1 || got[0] != "song-1" {
+		t.Fatalf("unexpected songIdToAdd values: %v", got)
+	}
+	if got := params["songIdToRemove"]; len(got) != 1 || got[0] != "song-2" {
+		t.Fatalf("unexpected songIdToRemove values: %v", got)
+	}
+}
