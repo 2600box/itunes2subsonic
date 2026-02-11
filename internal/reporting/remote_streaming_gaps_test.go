@@ -137,3 +137,49 @@ func containsGapFlag(flags []string, target string) bool {
 	}
 	return false
 }
+
+func TestRemoteStreamingPrefersCanonicalMatchKey(t *testing.T) {
+	apple := []RemoteStreamingAppleTrack{{
+		TrackID:         11,
+		MatchKey:        "library/a.m4a",
+		Title:           "Letters From Rome",
+		Artist:          "Fennec",
+		Album:           "Travel Notes",
+		Rating:          100,
+		Loved:           true,
+		DurationSeconds: 210,
+	}}
+	navidrome := []RemoteStreamingNavidromeTrack{
+		{
+			SongID:          "song-wrong",
+			MatchKey:        "library/other.m4a",
+			Title:           "Letters From Rome",
+			Artist:          "Fennec",
+			Album:           "Travel Notes",
+			Rating:          0,
+			Starred:         false,
+			DurationSeconds: 210,
+		},
+		{
+			SongID:          "song-right",
+			MatchKey:        "library/a.m4a",
+			Title:           "Letters From Rome",
+			Artist:          "Fennec",
+			Album:           "Travel Notes",
+			Rating:          5,
+			Starred:         true,
+			DurationSeconds: 210,
+		},
+	}
+	result := BuildRemoteStreamingGapReport("test", apple, navidrome)
+	entry := result.Entries[0]
+	if entry.MatchStatus != report.RemoteStreamingGapStatusMatch {
+		t.Fatalf("expected MATCH, got %s", entry.MatchStatus)
+	}
+	if entry.NavidromeSongID != "song-right" {
+		t.Fatalf("expected canonical match song-right, got %s", entry.NavidromeSongID)
+	}
+	if len(entry.GapFlags) != 0 {
+		t.Fatalf("expected aligned metadata, got %v", entry.GapFlags)
+	}
+}

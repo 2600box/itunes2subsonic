@@ -112,3 +112,26 @@ func TestBuildUpdatePlaylistParamsUsesPlaylistIDKey(t *testing.T) {
 		t.Fatalf("unexpected songIdToRemove values: %v", got)
 	}
 }
+
+func TestCompilePlaylistExcludeMatcherSubstrings(t *testing.T) {
+	matcher, description, err := compilePlaylistExcludeMatcher("Music, Downloaded")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if description == "" {
+		t.Fatalf("expected description")
+	}
+	if matcher == nil || !matcher("Downloaded Tracks") || !matcher("My MUSIC") || matcher("Road Trip") {
+		t.Fatalf("unexpected matcher behavior")
+	}
+}
+
+func TestComputePlaylistDiffIDs(t *testing.T) {
+	adds, removes := computePlaylistDiffIDs([]string{"a", "b", "c"}, []string{"b", "c", "d"})
+	if len(adds) != 1 || adds[0] != "d" {
+		t.Fatalf("unexpected adds: %v", adds)
+	}
+	if len(removes) != 1 || removes[0] != "a" {
+		t.Fatalf("unexpected removes: %v", removes)
+	}
+}

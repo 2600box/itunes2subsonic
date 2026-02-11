@@ -109,7 +109,12 @@ func loadRemoteLovedRatedTracks(itunesXML string) ([]reporting.RemoteStreamingAp
 		if track.TotalTime > 0 {
 			durationSeconds = int(math.Round(float64(track.TotalTime) / 1000.0))
 		}
+		matchKey := ""
+		if parsed := parseLocation(track.Location); parsed.ok {
+			matchKey = normalizeMatchPathWithMode(parsed.parsed, *itunesRoot, matchModeValue(*matchMode))
+		}
 		tracks = append(tracks, reporting.RemoteStreamingAppleTrack{
+			MatchKey:        matchKey,
 			TrackID:         track.TrackId,
 			Title:           track.Name,
 			Artist:          track.Artist,
@@ -134,6 +139,7 @@ func loadNavidromeStreamingTracks(c *subsonic.Client, navidromeDump string) ([]r
 		tracks := make([]reporting.RemoteStreamingNavidromeTrack, 0, len(entries))
 		for _, entry := range entries {
 			tracks = append(tracks, reporting.RemoteStreamingNavidromeTrack{
+				MatchKey:        entry.MatchPath,
 				SongID:          entry.ID,
 				Title:           entry.Title,
 				Artist:          entry.Artist,
@@ -172,6 +178,7 @@ func loadNavidromeStreamingTracks(c *subsonic.Client, navidromeDump string) ([]r
 	tracks := make([]reporting.RemoteStreamingNavidromeTrack, 0, len(songs))
 	for _, song := range songs {
 		tracks = append(tracks, reporting.RemoteStreamingNavidromeTrack{
+			MatchKey:        normalizeMatchPathWithMode(song.Path(), *subsonicRoot, matchModeValue(*matchMode)),
 			SongID:          song.Id(),
 			Title:           song.title,
 			Artist:          song.artist,
@@ -196,6 +203,7 @@ func remoteStreamingGapTSVHeader() []string {
 		"apple_rating_5",
 		"apple_loved_bool",
 		"match_status",
+		"match_confidence",
 		"navidrome_song_id",
 		"navidrome_title",
 		"navidrome_artist",
@@ -239,6 +247,7 @@ func remoteStreamingGapTSVRows(entries []report.RemoteStreamingGapEntry) [][]str
 			appleRating,
 			strconv.FormatBool(entry.AppleLoved),
 			string(entry.MatchStatus),
+			entry.MatchConfidence,
 			entry.NavidromeSongID,
 			entry.NavidromeTitle,
 			entry.NavidromeArtist,

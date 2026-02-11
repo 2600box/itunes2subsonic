@@ -9,6 +9,7 @@ const (
 )
 
 type RemoteStreamingGapEntry struct {
+	MatchConfidence    string                   `json:"match_confidence,omitempty"`
 	AppleTrackID       int                      `json:"apple_track_id"`
 	AppleTitle         string                   `json:"apple_title,omitempty"`
 	AppleArtist        string                   `json:"apple_artist,omitempty"`

@@ -18,6 +18,7 @@ const (
 )
 
 type RemoteStreamingAppleTrack struct {
+	MatchKey        string
 	TrackID         int
 	Title           string
 	Artist          string
@@ -31,6 +32,7 @@ type RemoteStreamingAppleTrack struct {
 }
 
 type RemoteStreamingNavidromeTrack struct {
+	MatchKey        string
 	SongID          string
 	Title           string
 	Artist          string
@@ -101,32 +103,36 @@ func buildRemoteStreamingGapEntry(track RemoteStreamingAppleTrack, index remoteS
 	normArtist := match.NormalizeText(track.Artist)
 	normAlbum := match.NormalizeText(track.Album)
 
-	candidates := index.candidates(normTitle, normArtist, normAlbum, track.DurationSeconds)
+	candidates := index.candidates(track.MatchKey, normTitle, normArtist, normAlbum, track.DurationSeconds)
 	scored := scoreRemoteStreamingCandidates(track, candidates, normTitle, normArtist, normAlbum)
 	bestScore, secondScore := topScores(scored)
 
 	status := report.RemoteStreamingGapStatusNoMatch
+	confidence := string(report.RemoteStreamingGapStatusNoMatch)
 	var bestCandidate *remoteStreamingCandidate
 	if len(scored) > 0 && scored[0].Score >= matchThreshold {
+		confidence = string(report.RemoteStreamingGapStatusMatch)
 		if len(scored) == 1 || scored[0].Score-scored[1].Score >= matchClearanceDelta {
 			status = report.RemoteStreamingGapStatusMatch
 			bestCandidate = &scored[0]
 		} else {
 			status = report.RemoteStreamingGapStatusAmbiguous
+			confidence = string(report.RemoteStreamingGapStatusAmbiguous)
 		}
 	}
 
 	appleRating5 := ratingToFiveStar(track.Rating)
 	entry := report.RemoteStreamingGapEntry{
-		AppleTrackID: track.TrackID,
-		AppleTitle:   track.Title,
-		AppleArtist:  track.Artist,
-		AppleAlbum:   track.Album,
-		AppleRating5: appleRating5,
-		AppleLoved:   track.Loved,
-		MatchStatus:  status,
-		ScoreBest:    bestScore,
-		ScoreSecond:  secondScore,
+		AppleTrackID:    track.TrackID,
+		AppleTitle:      track.Title,
+		AppleArtist:     track.Artist,
+		AppleAlbum:      track.Album,
+		AppleRating5:    appleRating5,
+		AppleLoved:      track.Loved,
+		MatchStatus:     status,
+		MatchConfidence: confidence,
+		ScoreBest:       bestScore,
+		ScoreSecond:     secondScore,
 	}
 
 	if bestCandidate != nil {
@@ -215,6 +221,7 @@ func updateRemoteStreamingSummary(summary *report.RemoteStreamingGapSummary, ent
 }
 
 type remoteStreamingIndex struct {
+	byMatchKey  map[string][]remoteStreamingIndexEntry
 	exact       map[string][]remoteStreamingIndexEntry
 	titleArtist map[string][]remoteStreamingIndexEntry
 	titleAlbum  map[string][]remoteStreamingIndexEntry
@@ -222,6 +229,7 @@ type remoteStreamingIndex struct {
 
 func buildRemoteStreamingIndex(navidrome []RemoteStreamingNavidromeTrack) remoteStreamingIndex {
 	index := remoteStreamingIndex{
+		byMatchKey:  make(map[string][]remoteStreamingIndexEntry),
 		exact:       make(map[string][]remoteStreamingIndexEntry),
 		titleArtist: make(map[string][]remoteStreamingIndexEntry),
 		titleAlbum:  make(map[string][]remoteStreamingIndexEntry),
@@ -239,6 +247,9 @@ func buildRemoteStreamingIndex(navidrome []RemoteStreamingNavidromeTrack) remote
 			ArtistTok:                     match.Tokens(normArtist),
 			AlbumTok:                      match.Tokens(normAlbum),
 		}
+		if track.MatchKey != "" {
+			index.byMatchKey[track.MatchKey] = append(index.byMatchKey[track.MatchKey], entry)
+		}
 		if normTitle != "" && normArtist != "" && normAlbum != "" {
 			key := compositeKey(normTitle, normArtist, normAlbum)
 			index.exact[key] = append(index.exact[key], entry)
@@ -255,7 +266,12 @@ func buildRemoteStreamingIndex(navidrome []RemoteStreamingNavidromeTrack) remote
 	return index
 }
 
-func (index remoteStreamingIndex) candidates(normTitle string, normArtist string, normAlbum string, durationSeconds int) []remoteStreamingIndexEntry {
+func (index remoteStreamingIndex) candidates(matchKey string, normTitle string, normArtist string, normAlbum string, durationSeconds int) []remoteStreamingIndexEntry {
+	if matchKey != "" {
+		if candidates := index.byMatchKey[matchKey]; len(candidates) > 0 {
+			return filterDurationCandidates(candidates, durationSeconds)
+		}
+	}
 	if normTitle == "" {
 		return nil
 	}
