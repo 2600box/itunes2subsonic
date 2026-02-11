@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +20,8 @@ import (
 )
 
 const (
-	playlistRetryAttempts = 3
+	playlistRetryAttempts     = 3
+	enormousPlaylistThreshold = 10000
 )
 
 var retrySleep = time.Sleep
@@ -129,6 +131,127 @@ func withRetry(maxAttempts int, baseDelay time.Duration, op func() error) error 
 		}
 	}
 	return lastErr
+}
+
+func updatePlaylistMutationsBatched(request func(endpoint string, params url.Values) error, playlistID string, songIDsToAdd []string, songIDsToRemove []string, batchSize int) error {
+	if strings.TrimSpace(playlistID) == "" {
+		return errMissingPlaylistID
+	}
+	for _, chunk := range batchIDs(songIDsToRemove, batchSize) {
+		params := buildUpdatePlaylistParams(playlistID, nil, chunk)
+		if err := request("updatePlaylist", params); err != nil {
+			return err
+		}
+	}
+	for _, chunk := range batchIDs(songIDsToAdd, batchSize) {
+		params := buildUpdatePlaylistParams(playlistID, chunk, nil)
+		if err := request("updatePlaylist", params); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func computePlaylistDiffIDs(existingSongIDs []string, desiredSongIDs []string) ([]string, []string) {
+	existingSet := make(map[string]struct{}, len(existingSongIDs))
+	for _, id := range existingSongIDs {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		existingSet[id] = struct{}{}
+	}
+	desiredSet := make(map[string]struct{}, len(desiredSongIDs))
+	for _, id := range desiredSongIDs {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		desiredSet[id] = struct{}{}
+	}
+	addIDs := make([]string, 0)
+	for _, id := range desiredSongIDs {
+		if _, ok := existingSet[id]; !ok {
+			addIDs = append(addIDs, id)
+		}
+	}
+	removeIDs := make([]string, 0)
+	for _, id := range existingSongIDs {
+		if _, ok := desiredSet[id]; !ok {
+			removeIDs = append(removeIDs, id)
+		}
+	}
+	return addIDs, removeIDs
+}
+
+func isFullReplaceDiff(existingSongIDs []string, desiredSongIDs []string, addIDs []string, removeIDs []string) bool {
+	return len(existingSongIDs) > 0 && len(desiredSongIDs) > 0 && len(addIDs) == len(desiredSongIDs) && len(removeIDs) == len(existingSongIDs)
+}
+
+func isEnormousPlaylist(desiredCount int, existingCount int) bool {
+	if desiredCount > existingCount {
+		return desiredCount >= enormousPlaylistThreshold
+	}
+	return existingCount >= enormousPlaylistThreshold
+}
+
+func fetchPlaylistSongIDs(c *subsonic.Client, playlistID string) ([]string, error) {
+	var full *subsonic.Playlist
+	if err := withRetry(playlistRetryAttempts, 200*time.Millisecond, func() error {
+		playlist, err := c.GetPlaylist(playlistID)
+		if err != nil {
+			return err
+		}
+		full = playlist
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if full == nil {
+		return nil, errors.New("playlist_not_found")
+	}
+	ids := make([]string, 0, len(full.Entry))
+	for _, song := range full.Entry {
+		if strings.TrimSpace(song.ID) == "" {
+			continue
+		}
+		ids = append(ids, song.ID)
+	}
+	return ids, nil
+}
+
+func compilePlaylistExcludeMatcher(raw string) (func(name string) bool, string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, "", nil
+	}
+	if strings.HasPrefix(strings.ToLower(raw), "regex:") {
+		pattern := strings.TrimSpace(raw[len("regex:"):])
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, "", err
+		}
+		return func(name string) bool { return re.MatchString(name) }, "regex:" + pattern, nil
+	}
+	parts := strings.Split(raw, ",")
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		tokens = append(tokens, strings.ToLower(trimmed))
+	}
+	if len(tokens) == 0 {
+		return nil, "", nil
+	}
+	return func(name string) bool {
+		lower := strings.ToLower(name)
+		for _, token := range tokens {
+			if strings.Contains(lower, token) {
+				return true
+			}
+		}
+		return false
+	}, "substrings=" + strings.Join(tokens, ","), nil
 }
 
 func updatePlaylistBatched(request func(endpoint string, params url.Values) error, playlistID string, ids []string, batchSize int) error {

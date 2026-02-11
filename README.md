@@ -21,6 +21,7 @@ $ export SUBSONIC_PASS="my navidrome password"
 * `--update_played` (default: `true`): Sync play count and last played date.
 * `--sync_starred` (default: `true`): Sync favorited/loved tracks to Navidrome starred.
 * `--sync_playlists` (default: `true`): Sync playlists.
+* `--playlist_exclude` (default: empty): Skip playlist names by comma-separated substrings or `regex:<pattern>` (useful for huge playlists like `Music`/`Downloaded`).
 * `--max_scrobbles` (default: `250`): Max scrobbles per track when syncing play counts.
 * `--itunes_root` (optional): Music library prefix for Apple Music paths.
 * `--subsonic_root` (optional): Music library prefix for Navidrome paths.
@@ -207,6 +208,14 @@ The remote match report classifies each remote track as:
 LOW_CONFIDENCE entries are also summarized in the report for manual review.
 
 ### Remote streaming gaps report
+
+The report now prioritises canonical path matching (same normalised realpath key used by sync) before fuzzy matching. It only flags:
+
+* streaming loved/rated tracks missing in Navidrome, or
+* matched tracks where Navidrome starred/rating differs from Apple Music.
+
+Aligned matches (including known-good items like “Letters From Rome”) are emitted in `*.aligned.tsv` and not reported as gaps.
+
 
 To identify Apple Music remote streaming tracks that are loved/rated but missing or mismatched in Navidrome:
 
